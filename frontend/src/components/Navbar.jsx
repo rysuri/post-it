@@ -13,17 +13,10 @@ function Navbar() {
     <div className="relative">
       <div className="flex justify-between items-center bg-white/80 backdrop-blur-md text-black p-3 shadow-lg border border-white/20">
         <Link to="/" className="px-4 py-2" onClick={closeMenu}>
-          {/* Mobile Logo */}
-          <img
-            src="/makeapost.svg"
-            alt="Make A Post"
-            className="h-8 w-auto object-contain flex-shrink-0 sm:hidden"
-          />
-          {/* Desktop Logo */}
           <img
             src="/logo-bw.png"
             alt="Make A Post"
-            className="h-8 w-auto object-contain flex-shrink-0 hidden sm:block"
+            className="h-8 w-auto object-contain flex-shrink-0"
           />
         </Link>
 
@@ -69,7 +62,7 @@ function Navbar() {
 
       {/* Mobile Menu */}
       <div
-        className={`md:hidden absolute top-full left-0 right-0 bg-white/95 backdrop-blur-md border-x border-b border-white/20 shadow-lg transition-all duration-300 overflow-hidden ${
+        className={`md:hidden absolute top-full left-0 right-0 bg-white/80 backdrop-blur-md border-x border-b border-white/20 shadow-lg transition-all duration-300 overflow-hidden ${
           isOpen ? "max-h-96 opacity-100" : "max-h-0 opacity-0"
         }`}
       >

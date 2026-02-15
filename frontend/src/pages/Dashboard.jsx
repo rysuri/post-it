@@ -26,7 +26,7 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="w-full flex items-center justify-center">
+      <div className="w-full flex items-center justify-center min-h-[60vh]">
         <p className="text-2xl text-gray-600">Loading...</p>
       </div>
     );
@@ -35,39 +35,39 @@ export default function Dashboard() {
   if (!user) {
     navigate("/");
     return (
-      <div className="w-full flex items-center justify-center">
+      <div className="w-full flex items-center justify-center min-h-[60vh]">
         <p className="text-2xl text-gray-600">Not Authenticated...</p>
       </div>
     );
   }
 
   return (
-    <div className="w-full flex items-center justify-center p-6">
-      <div className="bg-white p-8 rounded-lg shadow-xl max-w-lg w-full animate-[slideUp_0.4s_ease-out]">
+    <div className="w-full flex items-center justify-center p-4 sm:p-6">
+      <div className="bg-white p-6 sm:p-8 rounded-lg shadow-xl max-w-lg w-full animate-[slideUp_0.4s_ease-out]">
         <div className="space-y-6">
-          <h1 className="text-2xl font-bold text-gray-800 animate-[fadeIn_0.5s_ease-out]">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800 animate-[fadeIn_0.5s_ease-out]">
             Hey,{" "}
             {[user.given_name, user.family_name].filter(Boolean).join(" ") ||
               "there"}
             !
           </h1>
 
-          <div className="flex gap-6 items-start animate-[fadeIn_0.6s_ease-out]">
+          <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 items-center sm:items-start animate-[fadeIn_0.6s_ease-out]">
             <img
               src={user.picture || "/user-placeholder.png"}
               alt={`${user.given_name} ${user.family_name}`}
               onError={(e) => (e.target.src = "/user-placeholder.png")}
-              className="w-24 h-24 rounded-full shadow-md flex-shrink-0"
+              className="w-20 h-20 sm:w-24 sm:h-24 rounded-full shadow-md flex-shrink-0"
             />
 
-            <div className="space-y-2 text-left text-gray-700 flex-1">
-              <p className="text-base">
+            <div className="space-y-2 text-center sm:text-left text-gray-700 flex-1 w-full">
+              <p className="text-sm sm:text-base break-words">
                 <strong>Email:</strong> {user.email}
               </p>
-              <p className="text-base">
+              <p className="text-sm sm:text-base">
                 <strong>Role:</strong> {user.role}
               </p>
-              <p className="text-base">
+              <p className="text-sm sm:text-base">
                 <strong>Member since:</strong> {formatDate(user.created_at)}
               </p>
             </div>
