@@ -29,9 +29,13 @@ function Navbar() {
 
         {/* Desktop Navigation */}
         <div className="hidden md:flex gap-4">
+          <Link to="/report" className="px-4 py-2">
+            Report
+          </Link>
           <Link to="/operations" className="px-4 py-2">
             Operations
           </Link>
+
           {!loading && (
             <>
               {!user ? (
@@ -70,13 +74,6 @@ function Navbar() {
         }`}
       >
         <div className="flex flex-col p-2">
-          <Link
-            to="/operations"
-            className="px-4 py-3 hover:bg-black/5 transition-colors"
-            onClick={closeMenu}
-          >
-            Operations
-          </Link>
           {!loading && (
             <>
               {!user ? (
@@ -100,6 +97,21 @@ function Navbar() {
               )}
             </>
           )}
+          <Link
+            to="/operations"
+            className="px-4 py-3 hover:bg-black/5 transition-colors"
+            onClick={closeMenu}
+          >
+            Operations
+          </Link>
+
+          <Link
+            to="/report"
+            className="px-4 py-3 hover:bg-black/5 transition-colors"
+            onClick={closeMenu}
+          >
+            Report
+          </Link>
         </div>
       </div>
     </div>

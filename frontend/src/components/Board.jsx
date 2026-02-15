@@ -26,7 +26,7 @@ function Board() {
     isBoardInteractive,
   } = useBoard();
 
-  const blockedRoutes = ["/dashboard", "/operations", "/login"];
+  const blockedRoutes = ["/dashboard", "/operations", "/login", "/report"];
   const isBlocked =
     blockedRoutes.includes(location.pathname) ||
     !isBoardInteractive ||
@@ -164,7 +164,7 @@ function Board() {
         }}
       />
 
-      {/* <div
+      <div
         className="absolute top-20 md:top-28 2xl:top-32 right-4 2xl:right-10 z-10 flex flex-col gap-2 bg-white p-3 2xl:p-10 rounded-lg shadow-lg transition-all duration-100 ease-in-out max-w-full 2xl:max-w-7xl"
         style={{
           transform: isBlocked ? "translateX(150%)" : "translateX(0)",
@@ -208,7 +208,7 @@ function Board() {
         />
         <p className="text-sm text-gray-600">Scroll to zoom • Drag to pan</p>
         <p className="text-sm text-gray-600">Posts: {posts.length}</p>
-      </div> */}
+      </div>
 
       <div
         ref={boardRef}

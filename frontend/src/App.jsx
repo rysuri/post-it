@@ -10,10 +10,12 @@ import Home from "./pages/Home.jsx";
 
 import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import Report from "./pages/Report.jsx";
 
 import Operations from "./pages/Operations.jsx";
 import Add from "./pages/Add.jsx";
 import Draw from "./pages/Draw.jsx";
+
 import Checkout from "./components/Checkout.jsx";
 
 import ErrorBoundary from "./pages/ErrorBoundary.jsx";
@@ -39,11 +41,15 @@ function App() {
                 <Routes>
                   <Route path="/" element={<Home />} />
                   <Route path="/login" element={<Login />} />
+
+                  <Route path="/report" element={<Report />} />
+
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/checkout" element={<Checkout />} />
+
                   <Route path="/operations" element={<Operations />} />
                   <Route path="/operations/add" element={<Add />} />
                   <Route path="/operations/draw" element={<Draw />} />
-                  <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/checkout" element={<Checkout />} />
 
                   <Route path="*" element={<ErrorBoundary />} />
                 </Routes>

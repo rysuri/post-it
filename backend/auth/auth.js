@@ -70,12 +70,11 @@ export const googleAuth = async (req, res) => {
       family_name,
     });
 
-    // CRITICAL: For cross-origin cookies (Vercel -> Railway)
     const cookieOptions = {
       httpOnly: true,
-      secure: true, // MUST be true for sameSite=none
-      sameSite: "none", // MUST be 'none' for cross-origin
-      maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days
+      secure: true,
+      sameSite: "none",
+      maxAge: 3 * 24 * 60 * 60 * 1000,
       path: "/",
     };
 

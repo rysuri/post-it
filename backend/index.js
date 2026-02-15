@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
-
+const nodemailer = require("nodemailer");
 const authRoutes = require("./routes/auth");
 const dataRoutes = require("./routes/data");
 const stripeRoutes = require("./routes/stripe");
@@ -59,6 +59,36 @@ app.use(express.json());
 app.use("/auth", authRoutes);
 app.use("/data", dataRoutes);
 app.use("/stripe", stripeRoutes);
+
+app.post("/contact", async (req, res) => {
+  const { name, email, message } = req.body;
+  if (!name || !email || !message) {
+    return res.status(400).json({ error: "All fields required." });
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: process.env.EMAIL_USER,
+      replyTo: email,
+      subject: `New message from ${name}`,
+      html: `<p><strong>From:</strong> ${name} (${email})</p><p>${message}</p>`,
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to send message." });
+  }
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));

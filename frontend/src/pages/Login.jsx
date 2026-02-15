@@ -16,13 +16,12 @@ function Login() {
           { withCredentials: true },
         );
 
-        console.log("Login response:", response); // Add logging
+        console.log("Login response:", response);
 
         navigate("/dashboard");
         window.location.reload();
       } catch (error) {
         console.error("Login failed:", error.response || error);
-        // Show error to user
       }
     },
     onError: (error) => {
