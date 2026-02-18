@@ -1,19 +1,8 @@
 export const logout = (req, res) => {
-  try {
-    res.clearCookie("session", {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false,
-    });
+  res.setHeader(
+    "Set-Cookie",
+    `session=; HttpOnly; Secure; SameSite=None; Max-Age=0; Path=/; Partitioned`,
+  );
 
-    return res.status(200).json({
-      message: "Logged out successfully",
-    });
-  } catch (error) {
-    console.error("Logout error:", error);
-
-    return res.status(500).json({
-      message: "Logout failed",
-    });
-  }
+  return res.status(200).json({ message: "Logged out successfully" });
 };

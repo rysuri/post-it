@@ -70,16 +70,6 @@ export const googleAuth = async (req, res) => {
       family_name,
     });
 
-    const cookieOptions = {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      maxAge: 3 * 24 * 60 * 60 * 1000,
-      path: "/",
-    };
-
-    console.log("Setting cookie with options:", cookieOptions);
-
     res.setHeader(
       "Set-Cookie",
       `session=${token}; HttpOnly; Secure; SameSite=None; Max-Age=259200; Path=/; Partitioned`,

@@ -31,19 +31,14 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
-console.log("Allowed CORS origins:", allowedOrigins);
-
 app.use(
   cors({
     origin: function (origin, callback) {
-      console.log("Request from origin:", origin);
-
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
       } else {
-        console.log("Origin not allowed:", origin);
         callback(new Error("Not allowed by CORS"));
       }
     },
