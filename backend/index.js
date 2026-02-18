@@ -73,6 +73,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
       session.amount_total / 100,
       session.currency?.toUpperCase(),
     );
+    console.log("Metadata:", session.metadata);
   }
 
   // Always return 200 so Stripe knows you received it
