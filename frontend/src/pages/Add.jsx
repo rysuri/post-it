@@ -107,6 +107,7 @@ function Add() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          credentials: "include", // 👈 this sends the session cookie
         },
       );
 

@@ -6,7 +6,7 @@ const nodemailer = require("nodemailer");
 const authRoutes = require("./routes/auth");
 const dataRoutes = require("./routes/data");
 const stripeRoutes = require("./routes/stripe");
-
+const dbClient = require("./config/database");
 const app = express();
 
 app.use(cookieParser());
@@ -50,36 +50,100 @@ app.use(
 
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
-app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-  } catch (err) {
-    console.error("❌ Webhook signature verification failed:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+      console.error("❌ Webhook signature verification failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
 
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const { unverified_post_id } = session.metadata;
 
-    console.log("✅ Payment received!");
-    console.log("Session ID:", session.id);
-    console.log("Customer email:", session.customer_details?.email);
-    console.log(
-      "Amount total:",
-      session.amount_total / 100,
-      session.currency?.toUpperCase(),
-    );
-    console.log("Metadata:", session.metadata);
-  }
+      console.log("✅ Payment received!");
+      console.log("Session ID:", session.id);
+      console.log("Customer email:", session.customer_details?.email);
+      console.log(
+        "Amount total:",
+        session.amount_total / 100,
+        session.currency?.toUpperCase(),
+      );
+      console.log("Unverified Post ID:", unverified_post_id);
 
-  // Always return 200 so Stripe knows you received it
-  res.json({ received: true });
-});
+      if (!unverified_post_id) {
+        console.error("❌ No unverified_post_id in metadata");
+        return res.json({ received: true });
+      }
 
+      try {
+        await dbClient.query("BEGIN");
+
+        // Fetch the unverified post
+        const { rows } = await dbClient.query(
+          `SELECT * FROM unverified_posts WHERE id = $1`,
+          [unverified_post_id],
+        );
+
+        if (rows.length === 0) {
+          await dbClient.query("ROLLBACK");
+          console.error("❌ Unverified post not found:", unverified_post_id);
+          return res.json({ received: true });
+        }
+
+        const post = rows[0];
+
+        // Insert into posts
+        await dbClient.query(
+          `INSERT INTO posts 
+          (author, message, drawing, link, size, exp, color, position_x, position_y)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            post.author,
+            post.message,
+            post.drawing,
+            post.link,
+            post.size,
+            post.exp,
+            post.color,
+            post.position_x,
+            post.position_y,
+          ],
+        );
+
+        // Increment posts_made on the user
+        await dbClient.query(
+          `UPDATE users SET posts_made = posts_made + 1 WHERE id = $1`,
+          [post.author],
+        );
+
+        // Delete from unverified_posts
+        await dbClient.query(`DELETE FROM unverified_posts WHERE id = $1`, [
+          unverified_post_id,
+        ]);
+
+        await dbClient.query("COMMIT");
+        console.log(
+          "✅ Post promoted from unverified_posts to posts:",
+          unverified_post_id,
+        );
+      } catch (err) {
+        await dbClient.query("ROLLBACK");
+        console.error("❌ Failed to promote post:", err.message);
+      }
+    }
+
+    res.json({ received: true });
+  },
+);
 app.use(express.json());
 
 // Routes
