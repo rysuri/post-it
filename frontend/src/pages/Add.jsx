@@ -87,37 +87,39 @@ function Add() {
   }
 
   async function handlePost(x, y) {
+    console.log("handle post");
+
+    const payload = {
+      message: inputValue,
+      link: link || null,
+      size: size,
+      position_x: x,
+      position_y: y,
+      color: color,
+      expiration: expiration,
+    };
+    console.log("payload:", payload);
+
     try {
-      const { data } = await axios.post(
-        `${import.meta.env.VITE_API_URL}/data/post`,
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/stripe/create-checkout-session`,
         {
-          message: inputValue,
-          link: link || null,
-          size: size,
-          position_x: x,
-          position_y: y,
-          color: color,
-          expiration: expiration,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
         },
-        { withCredentials: true },
       );
 
-      console.log("Post created:", data);
-      setInputValue("");
-      setLink("");
-      setIsPlacing(false);
-      setIsBoardInteractive(false);
-
-      triggerRefresh();
-      navigate("/");
+      const { url } = await res.json();
+      console.log("Redirecting to checkout:", url);
+      window.location.href = url;
     } catch (error) {
-      console.error("Post error:", error.response?.data || error.message);
-      alert("Failed to create post");
+      console.error("Checkout error:", error);
+      alert("Failed to start checkout");
       setIsPlacing(false);
       setIsBoardInteractive(false);
     }
   }
-
   if (loading) {
     return <div className="p-8 text-center">Loading...</div>;
   }
