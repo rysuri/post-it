@@ -6,7 +6,7 @@ import PostIt from "../components/PostIt";
 import CheckoutRedirectModal from "../components/CheckoutRedirectModal";
 import { Info } from "lucide-react";
 const SIZE_PRICES = { S: 1, M: 3, L: 5 };
-const PROTECTION_PRICE = 5;
+const PROTECTION_PRICE = 10;
 
 function Add() {
   const [inputValue, setInputValue] = useState("");

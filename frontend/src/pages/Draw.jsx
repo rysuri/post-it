@@ -8,7 +8,7 @@ import { Info } from "lucide-react";
 import simplify from "simplify-js";
 
 const SIZE_PRICES = { S: 1, M: 3, L: 5 };
-const PROTECTION_PRICE = 5;
+const PROTECTION_PRICE = 10;
 
 function Draw() {
   const [size, setSize] = useState("S");

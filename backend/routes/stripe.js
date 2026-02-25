@@ -40,9 +40,9 @@ router.post("/create-checkout-session", async (req, res) => {
     console.log("isProtected received:", isProtected, typeof isProtected);
 
     const priceLookup = {
-      S: "price_1SyzC3F6rYe2uhLgPj9YwxYD",
-      M: "price_1SyzCVF6rYe2uhLgGfylmHDb",
-      L: "price_1SyzCiF6rYe2uhLgOocGxuab",
+      S: "price_1SzmUEFIxcv5FU93X6BCMaQA",
+      M: "price_1SzmUAFIxcv5FU93L9p0lJLV",
+      L: "price_1SzmUDFIxcv5FU93f6LAQAvs",
     };
 
     const priceId = priceLookup[size];
@@ -75,7 +75,7 @@ router.post("/create-checkout-session", async (req, res) => {
 
     if (isProtected) {
       lineItems.push({
-        price: "price_1SzmGmF6rYe2uhLgnqoU3W1c", // 🔁 replace with your Stripe protection price ID
+        price: "price_1SzmTzFIxcv5FU93i9htQkgh",
         quantity: 1,
       });
     }
