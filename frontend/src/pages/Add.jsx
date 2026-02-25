@@ -4,6 +4,7 @@ import { useAuth } from "../AuthContext";
 import { useBoard } from "../BoardContext";
 import { useNavigate } from "react-router-dom";
 import PostIt from "../components/PostIt";
+import CheckoutRedirectModal from "../components/CheckoutRedirectModal";
 
 function Add() {
   const [inputValue, setInputValue] = useState("");
@@ -12,6 +13,7 @@ function Add() {
   const [color, setColor] = useState("Y");
   const [expiration, setExpiration] = useState("7 days");
   const [isPlacing, setIsPlacing] = useState(false);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [boardPos, setBoardPos] = useState({ x: 0, y: 0 });
 
@@ -33,6 +35,7 @@ function Add() {
     if (!isPlacing) return;
 
     const handleMouseMove = (e) => {
+      if (isCheckingOut) return;
       setMousePos({ x: e.clientX, y: e.clientY });
       const pos = screenToBoard(e.clientX, e.clientY);
       setBoardPos(pos);
@@ -40,7 +43,7 @@ function Add() {
 
     window.addEventListener("mousemove", handleMouseMove);
     return () => window.removeEventListener("mousemove", handleMouseMove);
-  }, [isPlacing, screenToBoard]);
+  }, [isPlacing, isCheckingOut, screenToBoard]);
 
   useEffect(() => {
     if (!isPlacing) return;
@@ -100,6 +103,8 @@ function Add() {
     };
     console.log("payload:", payload);
 
+    setIsCheckingOut(true);
+
     try {
       const res = await fetch(
         `${import.meta.env.VITE_API_URL}/stripe/create-checkout-session`,
@@ -107,7 +112,7 @@ function Add() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
-          credentials: "include", // 👈 this sends the session cookie
+          credentials: "include",
         },
       );
 
@@ -117,6 +122,7 @@ function Add() {
     } catch (error) {
       console.error("Checkout error:", error);
       alert("Failed to start checkout");
+      setIsCheckingOut(false);
       setIsPlacing(false);
       setIsBoardInteractive(false);
     }
@@ -142,6 +148,8 @@ function Add() {
           }
         }
       `}</style>
+
+      <CheckoutRedirectModal isOpen={isCheckingOut} />
 
       {isPlacing && (
         <div

@@ -11,7 +11,7 @@ function Navbar() {
 
   return (
     <div className="relative">
-      <div className="flex justify-between items-center bg-white/80 backdrop-blur-md text-black p-3 shadow-lg border border-white/20">
+      <div className="flex justify-between items-center bg-white/80 backdrop-blur-md text-black p-2 shadow-lg border border-white/20">
         <Link to="/" className="px-4 py-2" onClick={closeMenu}>
           <img
             src="/logo-bw.png"
