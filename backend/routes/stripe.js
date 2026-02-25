@@ -9,7 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 router.post("/create-checkout-session", async (req, res) => {
   try {
-    // Auth - same pattern as createPost
+    // Auth
     const token = req.cookies.session;
     if (!token) return res.status(401).json({ error: "Not authenticated" });
 
@@ -25,8 +25,19 @@ router.post("/create-checkout-session", async (req, res) => {
 
     const userId = userResult.rows[0].id;
 
-    const { message, link, size, position_x, position_y, color, expiration } =
-      req.body;
+    const {
+      message,
+      drawing,
+      link,
+      size,
+      position_x,
+      position_y,
+      color,
+      expiration,
+      protected: isProtected,
+    } = req.body;
+
+    console.log("isProtected received:", isProtected, typeof isProtected);
 
     const priceLookup = {
       S: "price_1SyzC3F6rYe2uhLgPj9YwxYD",
@@ -40,27 +51,38 @@ router.post("/create-checkout-session", async (req, res) => {
     // Insert into unverified_posts
     const result = await dbClient.query(
       `INSERT INTO unverified_posts 
-        (author, message, link, size, exp, color, position_x, position_y)
-       VALUES ($1, $2, $3, $4, NOW() + $5::INTERVAL, $6, $7, $8)
+        (author, message, drawing, link, size, exp, color, position_x, position_y, protected)
+       VALUES ($1, $2, $3, $4, $5, NOW() + $6::INTERVAL, $7, $8, $9, $10)
        RETURNING id`,
       [
         userId,
         message?.trim() || null,
+        drawing ?? null,
         link ?? null,
         size,
         expiration,
         color,
         position_x,
         position_y,
+        isProtected ?? false,
       ],
     );
 
     const unverifiedPostId = result.rows[0].id;
 
-    // Pass only the id through Stripe
+    // Build line items — base size + optional protection add-on
+    const lineItems = [{ price: priceId, quantity: 1 }];
+
+    if (isProtected) {
+      lineItems.push({
+        price: "price_1SzmGmF6rYe2uhLgnqoU3W1c", // 🔁 replace with your Stripe protection price ID
+        quantity: 1,
+      });
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: lineItems,
       success_url: `${process.env.CLIENT_URL}/success`,
       cancel_url: `${process.env.CLIENT_URL}/cancel`,
       metadata: {

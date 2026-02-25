@@ -100,12 +100,18 @@ app.post(
         }
 
         const post = rows[0];
+        console.log(
+          "post protected value:",
+          post["protected"],
+          typeof post["protected"],
+        );
+        console.log("post keys:", Object.keys(post));
 
         // Insert into posts
         await dbClient.query(
           `INSERT INTO posts 
-          (author, message, drawing, link, size, exp, color, position_x, position_y)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            (author, message, drawing, link, size, exp, color, position_x, position_y, "protected")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             post.author,
             post.message,
@@ -116,6 +122,7 @@ app.post(
             post.color,
             post.position_x,
             post.position_y,
+            post["protected"],
           ],
         );
 

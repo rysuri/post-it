@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import axios from "axios";
 import PostIt from "./PostIt";
 import { useBoard } from "../BoardContext";
+import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 
 function Board() {
   const [posts, setPosts] = useState([]);
@@ -260,60 +261,21 @@ function Board() {
             className="p-1.5 rounded hover:bg-gray-100 transition text-gray-700"
             title="Zoom in"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16zm0-5V9m-3 3h6"
-              />
-            </svg>
+            <ZoomIn className="h-4 w-4" />
           </button>
           <button
             onClick={handleZoomOut}
             className="p-1.5 rounded hover:bg-gray-100 transition text-gray-700"
             title="Zoom out"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16zm-3 3h6"
-              />
-            </svg>
+            <ZoomOut className="h-4 w-4" />
           </button>
           <button
             onClick={handleResetView}
             className="p-1.5 rounded hover:bg-gray-100 transition text-gray-700"
             title="Reset view"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4 4v5h.582M20 20v-5h-.581M5.635 19A9 9 0 1019 6.364"
-              />
-            </svg>
+            <RotateCcw className="h-4 w-4" />
           </button>
           <span className="text-xs text-gray-500 pl-1.5 border-l border-gray-200">
             {(zoom * 100).toFixed(0)}%
@@ -411,21 +373,24 @@ function ZoomCard({ onZoomIn, onZoomOut, onReset, zoom }) {
     <div className="bg-white rounded-lg shadow-lg p-3 flex flex-col gap-2">
       <button
         onClick={onZoomIn}
-        className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
+        className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
       >
-        Zoom In (+)
+        Zoom In
+        <ZoomIn className="h-4 w-4" />
       </button>
       <button
         onClick={onZoomOut}
-        className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
+        className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
       >
-        Zoom Out (−)
+        Zoom Out
+        <ZoomOut className="h-4 w-4" />
       </button>
       <button
         onClick={onReset}
-        className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition text-sm font-medium"
+        className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition text-sm font-medium"
       >
         Reset View
+        <RotateCcw className="h-4 w-4" />
       </button>
       <div className="text-center text-sm text-gray-500">
         {(zoom * 100).toFixed(0)}%
