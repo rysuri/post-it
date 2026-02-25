@@ -16,6 +16,14 @@ function Board() {
   const location = useLocation();
   const boardRef = useRef(null);
 
+  // Touch state stored in a ref to avoid stale closures inside event listeners
+  const touchState = useRef({
+    isDragging: false,
+    lastX: 0,
+    lastY: 0,
+    lastDist: null, // distance between two fingers for pinch
+  });
+
   const {
     zoom,
     setZoom,
@@ -27,11 +35,25 @@ function Board() {
     isBoardInteractive,
   } = useBoard();
 
+  // Keep a ref to current zoom/pan so touch handlers (attached once) can read latest values
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+
   const blockedRoutes = ["/dashboard", "/operations", "/login", "/report"];
   const isBlocked =
     blockedRoutes.includes(location.pathname) ||
     !isBoardInteractive ||
     isModalOpen;
+  const isBlockedRef = useRef(isBlocked);
+  useEffect(() => {
+    isBlockedRef.current = isBlocked;
+  }, [isBlocked]);
 
   useEffect(() => {
     fetchPosts();
@@ -51,6 +73,106 @@ function Board() {
     }
   }
 
+  // ── Attach touch listeners with passive:false so we can preventDefault ──
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el) return;
+
+    const getDistance = (t1, t2) => {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    };
+
+    const getMidpoint = (t1, t2) => ({
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2,
+    });
+
+    const onTouchStart = (e) => {
+      if (isBlockedRef.current) return;
+      e.preventDefault();
+
+      if (e.touches.length === 1) {
+        touchState.current = {
+          isDragging: true,
+          lastX: e.touches[0].clientX,
+          lastY: e.touches[0].clientY,
+          lastDist: null,
+        };
+      } else if (e.touches.length === 2) {
+        touchState.current = {
+          isDragging: false,
+          lastX: 0,
+          lastY: 0,
+          lastDist: getDistance(e.touches[0], e.touches[1]),
+        };
+      }
+    };
+
+    const onTouchMove = (e) => {
+      if (isBlockedRef.current) return;
+      e.preventDefault();
+
+      const currentZoom = zoomRef.current;
+      const currentPan = panRef.current;
+
+      if (e.touches.length === 1 && touchState.current.isDragging) {
+        // Single finger pan
+        const dx = e.touches[0].clientX - touchState.current.lastX;
+        const dy = e.touches[0].clientY - touchState.current.lastY;
+        touchState.current.lastX = e.touches[0].clientX;
+        touchState.current.lastY = e.touches[0].clientY;
+        setPan({ x: currentPan.x + dx, y: currentPan.y + dy });
+      } else if (e.touches.length === 2) {
+        // Two finger pinch-to-zoom
+        const newDist = getDistance(e.touches[0], e.touches[1]);
+        const mid = getMidpoint(e.touches[0], e.touches[1]);
+
+        if (touchState.current.lastDist !== null) {
+          const scale = newDist / touchState.current.lastDist;
+          const newZoom = Math.min(Math.max(0.1, currentZoom * scale), 3);
+
+          // Zoom toward the midpoint between the two fingers
+          const pointX = (mid.x - currentPan.x) / currentZoom;
+          const pointY = (mid.y - currentPan.y) / currentZoom;
+          setZoom(newZoom);
+          setPan({
+            x: mid.x - pointX * newZoom,
+            y: mid.y - pointY * newZoom,
+          });
+        }
+
+        touchState.current.lastDist = newDist;
+      }
+    };
+
+    const onTouchEnd = (e) => {
+      if (e.touches.length === 0) {
+        touchState.current.isDragging = false;
+        touchState.current.lastDist = null;
+      } else if (e.touches.length === 1) {
+        // Went from 2 fingers to 1 — switch to pan mode
+        touchState.current.isDragging = true;
+        touchState.current.lastX = e.touches[0].clientX;
+        touchState.current.lastY = e.touches[0].clientY;
+        touchState.current.lastDist = null;
+      }
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: false });
+
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ^ intentionally empty — we use refs for live values
+
+  // ── Mouse handlers (desktop unchanged) ──
   const handleWheel = (e) => {
     if (isBlocked) return;
     e.preventDefault();
@@ -145,18 +267,6 @@ function Board() {
           opacity: isBlocked ? 1 : 0,
         }}
       />
-
-      {/*
-        ┌─────────────────────────────────────────────────────────┐
-        │ LEGEND LAYOUT TIERS                                     │
-        │                                                         │
-        │ Desktop  (≥1690px): flush to screen edges, top         │
-        │ Tablet   (768–1689px): max-w-7xl centered,             │
-        │           pushed below navbar                           │
-        │ Mobile   (<768px): compact pills; zoom moves to        │
-        │           bottom-right                                  │
-        └─────────────────────────────────────────────────────────┘
-      */}
 
       {/* ── LEFT LEGEND ── */}
 
@@ -287,6 +397,7 @@ function Board() {
       <div
         ref={boardRef}
         className={`w-full h-full ${!isBlocked && isDragging ? "cursor-grabbing" : !isBlocked ? "cursor-grab" : "cursor-default"}`}
+        style={{ touchAction: "none" }} // critical: tells browser we handle all touch ourselves
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -340,6 +451,7 @@ function Board() {
                   color={post.color}
                   createdAt={post.iat}
                   expiresAt={post.exp}
+                  isProtected={post.protected}
                   onModalOpen={() => setIsModalOpen(true)}
                   onModalClose={() => setIsModalOpen(false)}
                 />

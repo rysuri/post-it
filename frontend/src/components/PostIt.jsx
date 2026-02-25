@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useRef, useEffect, useState } from "react";
 import LinkWarningModal from "./Linkwarningmodal";
+import { ShieldCheck } from "lucide-react";
 
 function PostIt({
   message,
@@ -10,6 +11,7 @@ function PostIt({
   color,
   createdAt,
   expiresAt,
+  isProtected,
   onModalOpen,
   onModalClose,
 }) {
@@ -83,73 +85,98 @@ function PostIt({
     if (onModalClose) onModalClose();
   };
 
+  const protectedStyle = isProtected
+    ? {
+        boxShadow: `
+          0 0 0 1.5px rgba(156, 211, 255, 0.95),
+          0 0 12px rgba(66, 153, 225, 0.7),
+          0 0 28px rgba(66, 153, 225, 0.35)
+        `,
+      }
+    : {};
+
   return (
     <>
-      <div
-        className={`
-          ${sizeClasses[size] || sizeClasses.S} 
-          ${colorClasses[color] || colorClasses.Y}
-          rounded-sm 
-          shadow-lg 
-          transform 
-          transition-transform 
-          relative
-          select-none
-        `}
-        style={{
-          fontFamily: "'Indie Flower', cursive, sans-serif",
-        }}
-      >
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-4 bg-white/40 rounded-sm shadow-sm" />
-
-        {link && (
-          <div
-            onClick={handleLinkIconClick}
-            className="absolute top-2 right-2 bg-white/80 rounded-full p-1 shadow-sm z-10 cursor-pointer hover:bg-white hover:scale-110 transition-all"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-3 w-3 text-blue-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-              />
-            </svg>
-          </div>
-        )}
-
+      <div className="relative inline-block">
         <div
-          className={`w-full h-full flex items-center justify-center ${message ? "p-3" : ""}`}
+          className={`
+            ${sizeClasses[size] || sizeClasses.S}
+            ${colorClasses[color] || colorClasses.Y}
+            rounded-sm
+            shadow-lg
+            transform
+            transition-transform
+            relative
+            select-none
+          `}
+          style={{
+            fontFamily: "'Indie Flower', cursive, sans-serif",
+            ...protectedStyle,
+          }}
         >
-          {message && (
-            <p
-              className={`text-gray-800 leading-relaxed text-center break-words overflow-hidden ${textSizeClasses[size] || textSizeClasses.S}`}
-            >
-              {message}
-            </p>
-          )}
-          {drawing && (
-            <canvas
-              ref={canvasRef}
-              style={{
-                display: "block",
-                maxWidth: "100%",
-                maxHeight: "100%",
-                width: "auto",
-                height: "auto",
-              }}
-            />
-          )}
-        </div>
+          {/* Tape strip */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-4 bg-white/40 rounded-sm shadow-sm" />
 
-        <div className="absolute bottom-2 left-2 text-xs text-gray-600 opacity-60 z-10 pointer-events-none">
-          {new Date(createdAt).toLocaleDateString()}
+          {/* Shield badge — muted, small, tasteful */}
+          {isProtected && (
+            <div className="absolute top-1.5 left-2 z-10">
+              <ShieldCheck
+                className="h-3 w-3"
+                style={{ color: "rgb(156, 211, 255)" }}
+              />
+            </div>
+          )}
+
+          {/* Link icon */}
+          {link && (
+            <div
+              onClick={handleLinkIconClick}
+              className="absolute top-2 right-2 bg-white/80 rounded-full p-1 shadow-sm z-10 cursor-pointer hover:bg-white hover:scale-110 transition-all"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-3 w-3 text-blue-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                />
+              </svg>
+            </div>
+          )}
+
+          <div
+            className={`w-full h-full flex items-center justify-center ${message ? "p-3" : ""}`}
+          >
+            {message && (
+              <p
+                className={`text-gray-800 leading-relaxed text-center break-words overflow-hidden ${textSizeClasses[size] || textSizeClasses.S}`}
+              >
+                {message}
+              </p>
+            )}
+            {drawing && (
+              <canvas
+                ref={canvasRef}
+                style={{
+                  display: "block",
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  width: "auto",
+                  height: "auto",
+                }}
+              />
+            )}
+          </div>
+
+          <div className="absolute bottom-2 left-2 text-xs text-gray-600 opacity-60 z-10 pointer-events-none">
+            {new Date(createdAt).toLocaleDateString()}
+          </div>
         </div>
       </div>
 
@@ -188,8 +215,13 @@ PostIt.propTypes = {
   color: PropTypes.oneOf(["Y", "P", "B"]).isRequired,
   createdAt: PropTypes.string.isRequired,
   expiresAt: PropTypes.string.isRequired,
+  isProtected: PropTypes.bool,
   onModalOpen: PropTypes.func,
   onModalClose: PropTypes.func,
+};
+
+PostIt.defaultProps = {
+  isProtected: false,
 };
 
 export default PostIt;

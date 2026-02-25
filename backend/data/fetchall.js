@@ -3,7 +3,7 @@ const dbClient = require("../config/database");
 const getAllPosts = async (req, res) => {
   try {
     const query = `
-      SELECT author, message, drawing, link, size, iat, exp, position_x, position_y, color
+      SELECT author, message, drawing, link, size, iat, exp, position_x, position_y, color, protected
       FROM posts
       WHERE exp > NOW()
       ORDER BY iat ASC
