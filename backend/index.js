@@ -7,6 +7,7 @@ const authRoutes = require("./routes/auth");
 const dataRoutes = require("./routes/data");
 const stripeRoutes = require("./routes/stripe");
 const dbClient = require("./config/database");
+const { Resend } = require("resend");
 const app = express();
 
 app.use(cookieParser());
@@ -165,26 +166,11 @@ app.post("/contact", async (req, res) => {
   }
 
   try {
-    const { address } = await require("dns").promises.lookup("smtp.gmail.com", {
-      family: 4,
-    });
+    const resend = new Resend(process.env.RESEND_API_KEY);
 
-    const transporter = nodemailer.createTransport({
-      host: address,
-      port: 465,
-      secure: true,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-      tls: {
-        servername: "smtp.gmail.com",
-      },
-    });
-
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER,
+    await resend.emails.send({
+      from: "onboarding@resend.dev",
+      to: "rysu986@gmail.com",
       replyTo: email,
       subject: `New message from ${name}`,
       html: `<p><strong>From:</strong> ${name} (${email})</p><p>${message}</p>`,
