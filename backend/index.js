@@ -165,14 +165,20 @@ app.post("/contact", async (req, res) => {
   }
 
   try {
+    const { address } = await require("dns").promises.lookup("smtp.gmail.com", {
+      family: 4,
+    });
+
     const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
+      host: address,
       port: 465,
       secure: true,
-      family: 4, // 👈 Force IPv4
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
+      },
+      tls: {
+        servername: "smtp.gmail.com",
       },
     });
 
