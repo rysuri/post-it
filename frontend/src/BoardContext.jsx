@@ -3,8 +3,8 @@ import { createContext, useContext, useState } from "react";
 const BoardContext = createContext();
 
 export function BoardProvider({ children }) {
-  const BOARD_WIDTH = 10000;
-  const BOARD_HEIGHT = 10000;
+  const BOARD_WIDTH = 5000;
+  const BOARD_HEIGHT = 5000;
 
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({

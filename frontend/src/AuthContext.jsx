@@ -8,6 +8,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log("API URL:", import.meta.env.VITE_API_URL);
     verify();
   }, []);
 

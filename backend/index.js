@@ -20,9 +20,8 @@ const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
 if (process.env.NODE_ENV !== "production") {
   const localhostOrigins = [
     "http://localhost:5173",
-    "http://localhost:3000",
     "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000",
+    "http://192.168.0.90:5173",
   ];
 
   localhostOrigins.forEach((origin) => {
@@ -32,14 +31,18 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
+console.log("Allowed origins:", allowedOrigins);
+
 app.use(
   cors({
     origin: function (origin, callback) {
+      // Allow requests with no origin (mobile apps, curl, Postman)
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
       } else {
+        console.warn("Blocked by CORS:", origin);
         callback(new Error("Not allowed by CORS"));
       }
     },
@@ -88,7 +91,6 @@ app.post(
       try {
         await dbClient.query("BEGIN");
 
-        // Fetch the unverified post
         const { rows } = await dbClient.query(
           `SELECT * FROM unverified_posts WHERE id = $1`,
           [unverified_post_id],
@@ -101,14 +103,7 @@ app.post(
         }
 
         const post = rows[0];
-        console.log(
-          "post protected value:",
-          post["protected"],
-          typeof post["protected"],
-        );
-        console.log("post keys:", Object.keys(post));
 
-        // Insert into posts
         await dbClient.query(
           `INSERT INTO posts 
             (author, message, drawing, link, size, exp, color, position_x, position_y, "protected")
@@ -127,13 +122,11 @@ app.post(
           ],
         );
 
-        // Increment posts_made on the user
         await dbClient.query(
           `UPDATE users SET posts_made = posts_made + 1 WHERE id = $1`,
           [post.author],
         );
 
-        // Delete from unverified_posts
         await dbClient.query(`DELETE FROM unverified_posts WHERE id = $1`, [
           unverified_post_id,
         ]);
@@ -152,6 +145,7 @@ app.post(
     res.json({ received: true });
   },
 );
+
 app.use(express.json());
 
 // Routes
@@ -184,4 +178,8 @@ app.post("/contact", async (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Server running on port ${port}`));
+app.listen(port, "0.0.0.0", () => {
+  console.log(`Server running on port ${port}`);
+  console.log(`Local:   http://localhost:${port}`);
+  console.log(`Network: http://192.168.0.90:${port}`);
+});

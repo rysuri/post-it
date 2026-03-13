@@ -85,6 +85,7 @@ router.post("/create-checkout-session", async (req, res) => {
       line_items: lineItems,
       success_url: `${process.env.CLIENT_URL}/`,
       cancel_url: `${process.env.CLIENT_URL}/operations`,
+      allow_promotion_codes: true,
       metadata: {
         unverified_post_id: unverifiedPostId,
       },

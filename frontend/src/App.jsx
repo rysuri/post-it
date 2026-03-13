@@ -58,7 +58,7 @@ function App() {
           </main>
 
           <div className="mt-auto p-0 md:p-10 max-w-7xl mx-auto w-full">
-            <div className="pointer-events-auto select-none">
+            <div className="pointer-events-auto select-none hidden md:block">
               <Footer />
             </div>
           </div>

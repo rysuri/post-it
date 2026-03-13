@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 import PostIt from "./PostIt";
@@ -9,20 +9,19 @@ function Board() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const location = useLocation();
   const boardRef = useRef(null);
+  const boardInnerRef = useRef(null);
 
-  // Touch state stored in a ref to avoid stale closures inside event listeners
-  const touchState = useRef({
-    isDragging: false,
-    lastX: 0,
-    lastY: 0,
-    lastDist: null, // distance between two fingers for pinch
-  });
+  // ── Refs for gesture state (no re-renders during drag/pinch) ──
+  const pointers = useRef(new Map());
+  const lastPinchDistance = useRef(null);
+  const panRef = useRef({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  // Track displayed zoom for the zoom % indicator without re-rendering the whole board
+  const [displayZoom, setDisplayZoom] = useState(1);
 
   const {
     zoom,
@@ -35,22 +34,21 @@ function Board() {
     isBoardInteractive,
   } = useBoard();
 
-  // Keep a ref to current zoom/pan so touch handlers (attached once) can read latest values
-  const zoomRef = useRef(zoom);
-  const panRef = useRef(pan);
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
+  // Sync context values into refs on mount only
   useEffect(() => {
     panRef.current = pan;
-  }, [pan]);
+    zoomRef.current = zoom;
+    setDisplayZoom(zoom);
+    applyTransform();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const blockedRoutes = ["/dashboard", "/operations", "/login", "/report"];
   const isBlocked =
     blockedRoutes.includes(location.pathname) ||
     !isBoardInteractive ||
     isModalOpen;
-  const isBlockedRef = useRef(isBlocked);
+
+  const isBlockedRef = useRef(false);
   useEffect(() => {
     isBlockedRef.current = isBlocked;
   }, [isBlocked]);
@@ -65,191 +63,206 @@ function Board() {
         `${import.meta.env.VITE_API_URL}/data/posts`,
       );
       setPosts(data.posts);
-    } catch (error) {
-      console.error("Error fetching posts:", error);
+    } catch (err) {
+      console.error(err);
       setError("Failed to load posts");
     } finally {
       setLoading(false);
     }
   }
 
-  // ── Attach touch listeners with passive:false so we can preventDefault ──
+  // ── Stable function refs — wheel effect uses [] deps, never re-attaches ──
+  const setPanRef = useRef(setPan);
+  const setZoomRef = useRef(setZoom);
+  useEffect(() => {
+    setPanRef.current = setPan;
+  }, [setPan]);
+  useEffect(() => {
+    setZoomRef.current = setZoom;
+  }, [setZoom]);
+
+  // Apply transform directly to DOM — zero React re-renders
+  const applyTransform = useCallback(() => {
+    if (!boardInnerRef.current) return;
+    const { x, y } = panRef.current;
+    const z = zoomRef.current;
+    boardInnerRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${z})`;
+  }, []); // stable — only uses refs
+
+  // Commit ref values to context state
+  const commitTransform = useCallback(() => {
+    setPanRef.current({ ...panRef.current });
+    setZoomRef.current(zoomRef.current);
+    setDisplayZoom(zoomRef.current);
+  }, []); // stable — only uses refs
+
+  // ── Pointer events ──
+
+  const handlePointerDown = useCallback(
+    (e) => {
+      if (isBlocked) return;
+      boardRef.current?.setPointerCapture(e.pointerId);
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    },
+    [isBlocked],
+  );
+
+  const handlePointerMove = useCallback(
+    (e) => {
+      if (isBlocked) return;
+      if (!pointers.current.has(e.pointerId)) return;
+
+      const prev = pointers.current.get(e.pointerId);
+      const dx = e.clientX - prev.x;
+      const dy = e.clientY - prev.y;
+
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // PAN (single pointer)
+      if (pointers.current.size === 1) {
+        panRef.current = {
+          x: panRef.current.x + dx,
+          y: panRef.current.y + dy,
+        };
+        applyTransform();
+      }
+
+      // PINCH ZOOM (two pointers)
+      if (pointers.current.size === 2) {
+        const pts = [...pointers.current.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const midX = (pts[0].x + pts[1].x) / 2;
+        const midY = (pts[0].y + pts[1].y) / 2;
+
+        if (lastPinchDistance.current) {
+          const scale = dist / lastPinchDistance.current;
+          const currentZoom = zoomRef.current;
+          const newZoom = Math.min(Math.max(0.1, currentZoom * scale), 3);
+
+          const pointX = (midX - panRef.current.x) / currentZoom;
+          const pointY = (midY - panRef.current.y) / currentZoom;
+
+          zoomRef.current = newZoom;
+          panRef.current = {
+            x: midX - pointX * newZoom,
+            y: midY - pointY * newZoom,
+          };
+
+          applyTransform();
+        }
+
+        lastPinchDistance.current = dist;
+      }
+    },
+    [isBlocked, applyTransform],
+  );
+
+  const handlePointerUp = useCallback(
+    (e) => {
+      pointers.current.delete(e.pointerId);
+      lastPinchDistance.current = null;
+      if (pointers.current.size === 0) {
+        commitTransform();
+      }
+    },
+    [commitTransform],
+  );
+
+  // ── Wheel zoom — attached as native listener so we can use passive:false ──
   useEffect(() => {
     const el = boardRef.current;
     if (!el) return;
 
-    const getDistance = (t1, t2) => {
-      const dx = t1.clientX - t2.clientX;
-      const dy = t1.clientY - t2.clientY;
-      return Math.sqrt(dx * dx + dy * dy);
-    };
-
-    const getMidpoint = (t1, t2) => ({
-      x: (t1.clientX + t2.clientX) / 2,
-      y: (t1.clientY + t2.clientY) / 2,
-    });
-
-    const onTouchStart = (e) => {
+    const handleWheel = (e) => {
       if (isBlockedRef.current) return;
       e.preventDefault();
 
-      if (e.touches.length === 1) {
-        touchState.current = {
-          isDragging: true,
-          lastX: e.touches[0].clientX,
-          lastY: e.touches[0].clientY,
-          lastDist: null,
-        };
-      } else if (e.touches.length === 2) {
-        touchState.current = {
-          isDragging: false,
-          lastX: 0,
-          lastY: 0,
-          lastDist: getDistance(e.touches[0], e.touches[1]),
-        };
-      }
-    };
-
-    const onTouchMove = (e) => {
-      if (isBlockedRef.current) return;
-      e.preventDefault();
-
+      const scale = 1 - e.deltaY * 0.001;
       const currentZoom = zoomRef.current;
-      const currentPan = panRef.current;
+      const newZoom = Math.min(Math.max(0.1, currentZoom * scale), 3);
 
-      if (e.touches.length === 1 && touchState.current.isDragging) {
-        // Single finger pan
-        const dx = e.touches[0].clientX - touchState.current.lastX;
-        const dy = e.touches[0].clientY - touchState.current.lastY;
-        touchState.current.lastX = e.touches[0].clientX;
-        touchState.current.lastY = e.touches[0].clientY;
-        setPan({ x: currentPan.x + dx, y: currentPan.y + dy });
-      } else if (e.touches.length === 2) {
-        // Two finger pinch-to-zoom
-        const newDist = getDistance(e.touches[0], e.touches[1]);
-        const mid = getMidpoint(e.touches[0], e.touches[1]);
+      const pointX = (e.clientX - panRef.current.x) / currentZoom;
+      const pointY = (e.clientY - panRef.current.y) / currentZoom;
 
-        if (touchState.current.lastDist !== null) {
-          const scale = newDist / touchState.current.lastDist;
-          const newZoom = Math.min(Math.max(0.1, currentZoom * scale), 3);
+      zoomRef.current = newZoom;
+      panRef.current = {
+        x: e.clientX - pointX * newZoom,
+        y: e.clientY - pointY * newZoom,
+      };
 
-          // Zoom toward the midpoint between the two fingers
-          const pointX = (mid.x - currentPan.x) / currentZoom;
-          const pointY = (mid.y - currentPan.y) / currentZoom;
-          setZoom(newZoom);
-          setPan({
-            x: mid.x - pointX * newZoom,
-            y: mid.y - pointY * newZoom,
-          });
-        }
+      applyTransform();
 
-        touchState.current.lastDist = newDist;
-      }
+      clearTimeout(el._wheelTimer);
+      el._wheelTimer = setTimeout(() => {
+        commitTransform();
+      }, 150);
     };
 
-    const onTouchEnd = (e) => {
-      if (e.touches.length === 0) {
-        touchState.current.isDragging = false;
-        touchState.current.lastDist = null;
-      } else if (e.touches.length === 1) {
-        // Went from 2 fingers to 1 — switch to pan mode
-        touchState.current.isDragging = true;
-        touchState.current.lastX = e.touches[0].clientX;
-        touchState.current.lastY = e.touches[0].clientY;
-        touchState.current.lastDist = null;
-      }
-    };
-
-    el.addEventListener("touchstart", onTouchStart, { passive: false });
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
-    el.addEventListener("touchend", onTouchEnd, { passive: false });
-
+    el.addEventListener("wheel", handleWheel, { passive: false });
     return () => {
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
-      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("wheel", handleWheel);
+      clearTimeout(el._wheelTimer);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // ^ intentionally empty — we use refs for live values
+  }, [loading]); // re-runs when loading finishes and boardRef becomes available
 
-  // ── Mouse handlers (desktop unchanged) ──
-  const handleWheel = (e) => {
-    if (isBlocked) return;
-    e.preventDefault();
-    const delta = e.deltaY * -0.001;
-    const newZoom = Math.min(Math.max(0.1, zoom * (1 + delta)), 3);
-    const pointX = (e.clientX - pan.x) / zoom;
-    const pointY = (e.clientY - pan.y) / zoom;
-    setZoom(newZoom);
-    setPan({
-      x: e.clientX - pointX * newZoom,
-      y: e.clientY - pointY * newZoom,
-    });
-  };
-
-  const handleMouseDown = (e) => {
-    if (isBlocked) return;
-    if (e.button === 0) {
-      setIsDragging(true);
-      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-    }
-  };
-
-  const handleMouseMove = (e) => {
-    if (isBlocked) return;
-    if (isDragging)
-      setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
-  };
-
-  const handleMouseUp = () => {
-    if (isBlocked) return;
-    setIsDragging(false);
-  };
+  // ── Button controls ──
 
   const handleZoomIn = () => {
-    if (isBlocked) return;
-    const cx = window.innerWidth / 2,
-      cy = window.innerHeight / 2;
-    const newZoom = Math.min(zoom + 0.2, 3);
-    setPan({
-      x: cx - ((cx - pan.x) / zoom) * newZoom,
-      y: cy - ((cy - pan.y) / zoom) * newZoom,
-    });
-    setZoom(newZoom);
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const currentZoom = zoomRef.current;
+    const newZoom = Math.min(currentZoom + 0.2, 3);
+
+    zoomRef.current = newZoom;
+    panRef.current = {
+      x: cx - ((cx - panRef.current.x) / currentZoom) * newZoom,
+      y: cy - ((cy - panRef.current.y) / currentZoom) * newZoom,
+    };
+
+    applyTransform();
+    commitTransform();
   };
 
   const handleZoomOut = () => {
-    if (isBlocked) return;
-    const cx = window.innerWidth / 2,
-      cy = window.innerHeight / 2;
-    const newZoom = Math.max(zoom - 0.2, 0.1);
-    setPan({
-      x: cx - ((cx - pan.x) / zoom) * newZoom,
-      y: cy - ((cy - pan.y) / zoom) * newZoom,
-    });
-    setZoom(newZoom);
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const currentZoom = zoomRef.current;
+    const newZoom = Math.max(currentZoom - 0.2, 0.1);
+
+    zoomRef.current = newZoom;
+    panRef.current = {
+      x: cx - ((cx - panRef.current.x) / currentZoom) * newZoom,
+      y: cy - ((cy - panRef.current.y) / currentZoom) * newZoom,
+    };
+
+    applyTransform();
+    commitTransform();
   };
 
   const handleResetView = () => {
-    if (isBlocked) return;
-    setZoom(1);
-    setPan({
+    zoomRef.current = 1;
+    panRef.current = {
       x: window.innerWidth / 2 - BOARD_WIDTH / 2,
       y: window.innerHeight / 2 - BOARD_HEIGHT / 2,
-    });
+    };
+
+    applyTransform();
+    commitTransform();
   };
+
+  // ── Loading / Error ──
 
   if (loading)
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-200 flex items-center justify-center">
-        <p className="text-xl text-gray-600">Loading posts...</p>
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Loading posts...</p>
       </div>
     );
 
   if (error)
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-200 flex items-center justify-center">
-        <p className="text-xl text-red-500">{error}</p>
+      <div className="min-h-screen flex items-center justify-center">
+        <p>{error}</p>
       </div>
     );
 
@@ -257,7 +270,7 @@ function Board() {
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-gradient-to-br from-gray-50 to-gray-200">
-      {/* Blur overlay */}
+      {/* ── Blur overlay when board is blocked ── */}
       <div
         className="absolute inset-0 z-20 bg-white/10 transition-all duration-300 ease-in-out"
         style={{
@@ -270,7 +283,7 @@ function Board() {
 
       {/* ── LEFT LEGEND ── */}
 
-      {/* Desktop (≥1690px): flush top-left */}
+      {/* Desktop */}
       <div
         className={`absolute z-10 hidden min-[1690px]:block top-5 left-4 ${legendTransition}`}
         style={{
@@ -281,7 +294,7 @@ function Board() {
         <InfoCard posts={posts} />
       </div>
 
-      {/* Tablet (768–1689px): constrained within max-w-7xl, below navbar */}
+      {/* Tablet */}
       <div
         className={`absolute z-10 hidden md:max-[1689px]:block top-30 left-1/2 -translate-x-1/2 w-full max-w-7xl px-10 pointer-events-none ${legendTransition}`}
         style={{ opacity: isBlocked ? 0 : 1 }}
@@ -296,7 +309,7 @@ function Board() {
         </div>
       </div>
 
-      {/* Mobile (<768px): compact pill, top-left, below navbar */}
+      {/* Mobile */}
       <div
         className={`absolute z-10 flex md:hidden top-20 left-4 ${legendTransition}`}
         style={{
@@ -317,123 +330,50 @@ function Board() {
         </div>
       </div>
 
-      {/* ── RIGHT LEGEND (zoom controls) ── */}
-
-      {/* Desktop (≥1690px): flush top-right */}
-      <div
-        className={`absolute z-10 hidden min-[1690px]:block top-5 right-4 ${legendTransition}`}
-        style={{
-          transform: isBlocked ? "translateX(150%)" : "translateX(0)",
-          opacity: isBlocked ? 0 : 1,
-        }}
-      >
-        <ZoomCard
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onReset={handleResetView}
-          zoom={zoom}
-        />
-      </div>
-
-      {/* Tablet (768–1689px): constrained within max-w-7xl, below navbar — right-aligned */}
-      <div
-        className={`absolute z-10 hidden md:max-[1689px]:block top-30 left-1/2 -translate-x-1/2 w-full max-w-7xl px-10 pointer-events-none ${legendTransition}`}
-        style={{ opacity: isBlocked ? 0 : 1 }}
-      >
-        <div className="flex justify-end">
-          <div
-            className={`inline-block pointer-events-auto ${legendTransition}`}
-            style={{
-              transform: isBlocked ? "translateX(150%)" : "translateX(0)",
-            }}
-          >
-            <ZoomCard
-              onZoomIn={handleZoomIn}
-              onZoomOut={handleZoomOut}
-              onReset={handleResetView}
-              zoom={zoom}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile (<768px): compact pill, bottom-right */}
-      <div
-        className={`absolute z-10 flex md:hidden bottom-18 right-4 ${legendTransition}`}
-        style={{
-          transform: isBlocked ? "translateX(150%)" : "translateX(0)",
-          opacity: isBlocked ? 0 : 1,
-        }}
-      >
-        <div className="flex items-center gap-1 bg-white/90 backdrop-blur-sm rounded-lg shadow-md px-2 py-2">
-          <button
-            onClick={handleZoomIn}
-            className="p-1.5 rounded hover:bg-gray-100 transition text-gray-700"
-            title="Zoom in"
-          >
-            <ZoomIn className="h-4 w-4" />
-          </button>
-          <button
-            onClick={handleZoomOut}
-            className="p-1.5 rounded hover:bg-gray-100 transition text-gray-700"
-            title="Zoom out"
-          >
-            <ZoomOut className="h-4 w-4" />
-          </button>
-          <button
-            onClick={handleResetView}
-            className="p-1.5 rounded hover:bg-gray-100 transition text-gray-700"
-            title="Reset view"
-          >
-            <RotateCcw className="h-4 w-4" />
-          </button>
-          <span className="text-xs text-gray-500 pl-1.5 border-l border-gray-200">
-            {(zoom * 100).toFixed(0)}%
-          </span>
-        </div>
-      </div>
-
-      {/* Board canvas */}
+      {/* ── BOARD CANVAS ── */}
       <div
         ref={boardRef}
-        className={`w-full h-full ${!isBlocked && isDragging ? "cursor-grabbing" : !isBlocked ? "cursor-grab" : "cursor-default"}`}
-        style={{ touchAction: "none" }} // critical: tells browser we handle all touch ourselves
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        className="w-full h-full cursor-grab active:cursor-grabbing"
+        style={{ touchAction: "none" }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
       >
         <div
+          ref={boardInnerRef}
           style={{
             width: `${BOARD_WIDTH}px`,
             height: `${BOARD_HEIGHT}px`,
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
             transformOrigin: "0 0",
-            backgroundImage: `
-              linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px)
-            `,
-            backgroundSize: "50px 50px",
-            backgroundColor: "#f9fafb",
             position: "relative",
+            backgroundColor: "#f4f5f7",
+            backgroundImage: `
+              linear-gradient(rgba(99, 102, 241, 0.07) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(99, 102, 241, 0.07) 1px, transparent 1px),
+              linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px)
+            `,
+            backgroundSize: "100px 100px, 100px 100px, 20px 20px, 20px 20px",
           }}
         >
-          {posts.length === 0 ? (
-            <div
-              style={{
-                position: "absolute",
-                left: `${BOARD_WIDTH / 2}px`,
-                top: `${BOARD_HEIGHT / 2}px`,
-                transform: "translate(-50%, -50%)",
-              }}
-            >
-              <p className="text-center text-gray-500 text-lg">
-                No posts yet. Create your first post-it!
-              </p>
-            </div>
-          ) : (
-            posts.map((post) => (
+          {posts
+            .filter((post) => {
+              // Convert viewport bounds into board space, with padding so
+              // posts don't pop in/out at the exact edge
+              const padding = 300;
+              const vLeft = (-pan.x - padding) / zoom;
+              const vTop = (-pan.y - padding) / zoom;
+              const vRight = (window.innerWidth - pan.x + padding) / zoom;
+              const vBottom = (window.innerHeight - pan.y + padding) / zoom;
+
+              const px = (post.position_x || 0) + BOARD_WIDTH / 2;
+              const py = (post.position_y || 0) + BOARD_HEIGHT / 2;
+
+              return px >= vLeft && px <= vRight && py >= vTop && py <= vBottom;
+            })
+            .map((post) => (
               <div
                 key={post.id}
                 style={{
@@ -456,15 +396,94 @@ function Board() {
                   onModalClose={() => setIsModalOpen(false)}
                 />
               </div>
-            ))
-          )}
+            ))}
+        </div>
+      </div>
+
+      {/* ── ZOOM CONTROLS ── */}
+
+      {/* Desktop */}
+      <div
+        className={`absolute z-10 hidden min-[1690px]:block top-5 right-4 ${legendTransition}`}
+        style={{
+          transform: isBlocked ? "translateX(150%)" : "translateX(0)",
+          opacity: isBlocked ? 0 : 1,
+        }}
+      >
+        <ZoomCard
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onReset={handleResetView}
+          zoom={displayZoom}
+        />
+      </div>
+
+      {/* Tablet */}
+      <div
+        className={`absolute z-10 hidden md:max-[1689px]:block top-30 left-1/2 -translate-x-1/2 w-full max-w-7xl px-10 pointer-events-none ${legendTransition}`}
+        style={{ opacity: isBlocked ? 0 : 1 }}
+      >
+        <div className="flex justify-end">
+          <div
+            className={`inline-block pointer-events-auto ${legendTransition}`}
+            style={{
+              transform: isBlocked ? "translateX(150%)" : "translateX(0)",
+            }}
+          >
+            <ZoomCard
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onReset={handleResetView}
+              zoom={displayZoom}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile */}
+      <div
+        className={`absolute z-10 flex md:hidden bottom-18 right-4 ${legendTransition}`}
+        style={{
+          transform: isBlocked ? "translateX(150%)" : "translateX(0)",
+          opacity: isBlocked ? 0 : 1,
+        }}
+      >
+        <div className="flex items-center gap-2 bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg px-3 py-3">
+          <button
+            onClick={handleZoomIn}
+            className="w-11 h-11 flex items-center justify-center rounded-xl bg-blue-500 text-white shadow-sm
+              transition-all duration-150 ease-out
+              active:scale-90 active:bg-blue-700 active:shadow-inner
+              hover:bg-blue-600"
+          >
+            <ZoomIn className="h-5 w-5" />
+          </button>
+          <button
+            onClick={handleZoomOut}
+            className="w-11 h-11 flex items-center justify-center rounded-xl bg-blue-500 text-white shadow-sm
+              transition-all duration-150 ease-out
+              active:scale-90 active:bg-blue-700 active:shadow-inner
+              hover:bg-blue-600"
+          >
+            <ZoomOut className="h-5 w-5" />
+          </button>
+          <button
+            onClick={handleResetView}
+            className="w-11 h-11 flex items-center justify-center rounded-xl bg-gray-200 text-gray-600 shadow-sm
+              transition-all duration-150 ease-out
+              active:scale-90 active:bg-gray-400 active:shadow-inner
+              hover:bg-gray-300"
+          >
+            <RotateCcw className="h-5 w-5" />
+          </button>
+          <span className="text-sm font-medium text-gray-500 pl-2 border-l border-gray-200 min-w-[3rem] text-center">
+            {(displayZoom * 100).toFixed(0)}%
+          </span>
         </div>
       </div>
     </div>
   );
 }
-
-// ── Shared sub-components ─────────────────────────────────────
 
 function InfoCard({ posts }) {
   return (
@@ -490,6 +509,7 @@ function ZoomCard({ onZoomIn, onZoomOut, onReset, zoom }) {
         Zoom In
         <ZoomIn className="h-4 w-4" />
       </button>
+
       <button
         onClick={onZoomOut}
         className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
@@ -497,6 +517,7 @@ function ZoomCard({ onZoomIn, onZoomOut, onReset, zoom }) {
         Zoom Out
         <ZoomOut className="h-4 w-4" />
       </button>
+
       <button
         onClick={onReset}
         className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition text-sm font-medium"
@@ -504,6 +525,7 @@ function ZoomCard({ onZoomIn, onZoomOut, onReset, zoom }) {
         Reset View
         <RotateCcw className="h-4 w-4" />
       </button>
+
       <div className="text-center text-sm text-gray-500">
         {(zoom * 100).toFixed(0)}%
       </div>

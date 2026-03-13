@@ -41,7 +41,7 @@ function Home() {
         `}
       </style>
 
-      <div className="bg-white/80 backdrop-blur-md p-6 md:p-10 relative max-w-2xl mx-auto border border-white/20 shadow-2xl rounded-xl">
+      {/* <div className="bg-white/80 backdrop-blur-md p-6 md:p-10 relative max-w-2xl mx-auto border border-white/20 shadow-2xl rounded-xl">
         <div className="space-y-6">
           <h1 className="text-xl md:text-3xl lg:text-4xl font-bold text-slate-900 text-center animate-[fadeInDown_0.5s_ease-out] tracking-tight">
             A few words are worth
@@ -69,7 +69,7 @@ function Home() {
             </Link>
           </div>
         </div>
-      </div>
+      </div> */}
     </>
   );
 }

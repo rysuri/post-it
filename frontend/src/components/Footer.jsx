@@ -1,6 +1,6 @@
 function Footer() {
   return (
-    <div className="bg-white text-black p-4 shadow-md">
+    <div className="bg-white/80 backdrop-blur-md text-black p-4 shadow-lg border border-white/20">
       <div className="w-full mx-auto px-4 flex items-center justify-between">
         <p>
           <strong>rysuri</strong> powered 2026
