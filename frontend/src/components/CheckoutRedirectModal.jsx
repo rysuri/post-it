@@ -9,7 +9,7 @@ function CheckoutRedirectModal({ isOpen }) {
       className="fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-fadeIn"
       style={{ margin: 0 }}
     >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-black/70" />
 
       <div className="relative bg-white rounded-2xl shadow-2xl max-w-lg w-full p-8 animate-scaleIn">
         <div className="flex justify-center mb-6">

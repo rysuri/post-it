@@ -6,11 +6,11 @@ function LinkWarningModal({ isOpen, onClose, onConfirm, link }) {
 
   const modalContent = (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-fadeIn"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
       style={{ margin: 0 }}
     >
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-fadeIn"
         onClick={onClose}
       />
 
@@ -73,14 +73,14 @@ function LinkWarningModal({ isOpen, onClose, onConfirm, link }) {
       <style>{`
         @keyframes fadeIn {
           from { opacity: 0; }
-          to { opacity: 1; }
+          to   { opacity: 1; }
         }
         @keyframes scaleIn {
-          from { 
+          from {
             opacity: 0;
             transform: scale(0.95);
           }
-          to { 
+          to {
             opacity: 1;
             transform: scale(1);
           }
