@@ -442,7 +442,7 @@ function Board() {
 
       {/* Mobile */}
       <div
-        className={`absolute z-10 flex md:hidden bottom-18 right-4 ${legendTransition}`}
+        className={`absolute z-10 flex md:hidden bottom-4 right-4 ${legendTransition}`}
         style={{
           transform: isBlocked ? "translateX(150%)" : "translateX(0)",
           opacity: isBlocked ? 0 : 1,
