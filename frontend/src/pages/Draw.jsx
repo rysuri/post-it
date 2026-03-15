@@ -89,10 +89,20 @@ function Draw() {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    // Support both mouse and touch events
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    // Scale from CSS pixels to canvas pixels (needed because maxWidth: 100% shrinks the canvas)
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
+    };
   };
 
   const startDrawing = (e) => {
+    if (e.cancelable) e.preventDefault();
     const coords = getCanvasCoordinates(e);
     setIsDrawing(true);
     setCurrentPath([coords]);
@@ -100,6 +110,7 @@ function Draw() {
 
   const draw = (e) => {
     if (!isDrawing) return;
+    if (e.cancelable) e.preventDefault();
     setCurrentPath((prev) => [...prev, getCanvasCoordinates(e)]);
   };
 
@@ -278,8 +289,11 @@ function Draw() {
                   onMouseMove={draw}
                   onMouseUp={stopDrawing}
                   onMouseLeave={stopDrawing}
-                  className="cursor-crosshair block"
-                  /* Scale canvas visually on mobile so it doesn't overflow */
+                  onTouchStart={startDrawing}
+                  onTouchMove={draw}
+                  onTouchEnd={stopDrawing}
+                  onTouchCancel={stopDrawing}
+                  className="cursor-crosshair block touch-none"
                   style={{ maxWidth: "100%", height: "auto" }}
                 />
               </div>
