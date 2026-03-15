@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, useRef } from "react";
 
 const BoardContext = createContext();
 
@@ -14,15 +14,23 @@ export function BoardProvider({ children }) {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isBoardInteractive, setIsBoardInteractive] = useState(true);
 
+  // Exposed refs so consumers can read live values without React lag
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+
+  // Any function registered here gets called synchronously inside applyTransform
+  // — same call stack as the board's DOM update, zero lag guaranteed
+  const transformListenerRef = useRef(null);
+
   const screenToBoard = (screenX, screenY) => {
-    const boardX = (screenX - pan.x) / zoom - BOARD_WIDTH / 2;
-    const boardY = (screenY - pan.y) / zoom - BOARD_HEIGHT / 2;
+    const boardX =
+      (screenX - panRef.current.x) / zoomRef.current - BOARD_WIDTH / 2;
+    const boardY =
+      (screenY - panRef.current.y) / zoomRef.current - BOARD_HEIGHT / 2;
     return { x: Math.round(boardX), y: Math.round(boardY) };
   };
 
-  const triggerRefresh = () => {
-    setRefreshTrigger((prev) => prev + 1);
-  };
+  const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1);
 
   return (
     <BoardContext.Provider
@@ -31,6 +39,9 @@ export function BoardProvider({ children }) {
         setZoom,
         pan,
         setPan,
+        zoomRef,
+        panRef,
+        transformListenerRef,
         BOARD_WIDTH,
         BOARD_HEIGHT,
         screenToBoard,

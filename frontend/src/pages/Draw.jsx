@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "../AuthContext";
 import { useBoard } from "../BoardContext";
 import { useNavigate } from "react-router-dom";
@@ -9,6 +9,7 @@ import simplify from "simplify-js";
 
 const SIZE_PRICES = { S: 1, M: 3, L: 5 };
 const PROTECTION_PRICE = 10;
+const LONG_PRESS_MS = 600;
 
 function Draw() {
   const [size, setSize] = useState("S");
@@ -23,13 +24,26 @@ function Draw() {
   const [brushSize, setBrushSize] = useState(3);
   const [isPlacing, setIsPlacing] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [boardPos, setBoardPos] = useState({ x: 0, y: 0 });
   const [drawingData, setDrawingData] = useState(null);
+
+  const [longPressProgress, setLongPressProgress] = useState(0);
+  const longPressTimer = useRef(null);
+  const longPressInterval = useRef(null);
+  const longPressStart = useRef(null);
+
+  // Direct DOM ref for the post-it wrapper — we write transform here
+  // synchronously from the board's applyTransform, zero lag
+  const postItWrapperRef = useRef(null);
 
   const canvasRef = useRef(null);
   const { user, loading } = useAuth();
-  const { screenToBoard, zoom, setIsBoardInteractive } = useBoard();
+  const {
+    screenToBoard,
+    zoom,
+    pan,
+    transformListenerRef,
+    setIsBoardInteractive,
+  } = useBoard();
   const navigate = useNavigate();
 
   const totalPrice = SIZE_PRICES[size] + (protected_ ? PROTECTION_PRICE : 0);
@@ -43,56 +57,68 @@ function Draw() {
     document.title = "Draw · makeapost";
   }, []);
 
+  // While placing: board is interactive, and we hook into its applyTransform
+  // to update the post-it's scale in the same call stack — zero lag
   useEffect(() => {
-    if (!isPlacing) return;
-    const handleMouseMove = (e) => {
-      if (isCheckingOut) return;
-      setMousePos({ x: e.clientX, y: e.clientY });
-      setBoardPos(screenToBoard(e.clientX, e.clientY));
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-    return () => window.removeEventListener("mousemove", handleMouseMove);
-  }, [isPlacing, isCheckingOut, screenToBoard]);
+    if (!isPlacing) {
+      setIsBoardInteractive(false);
+      transformListenerRef.current = null;
+      return;
+    }
 
-  useEffect(() => {
-    if (!isPlacing) return;
-    const timer = setTimeout(() => {
-      const handleClick = async (e) => {
-        e.preventDefault();
-        await handlePost(boardPos.x, boardPos.y);
-      };
-      const handleEscape = (e) => {
-        if (e.key === "Escape") {
-          setIsPlacing(false);
-          setIsBoardInteractive(false);
-        }
-      };
-      window.addEventListener("click", handleClick);
-      window.addEventListener("keydown", handleEscape);
-      window._placementCleanup = () => {
-        window.removeEventListener("click", handleClick);
-        window.removeEventListener("keydown", handleEscape);
-      };
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-      if (window._placementCleanup) {
-        window._placementCleanup();
-        delete window._placementCleanup;
+    setIsBoardInteractive(true);
+
+    // Set initial transform from current board state
+    if (postItWrapperRef.current) {
+      postItWrapperRef.current.style.transform = `translate(-50%, -50%) scale(${zoom})`;
+    }
+
+    // Register listener — called synchronously inside Board's applyTransform
+    // every wheel tick and every pointer move, same frame as board DOM update
+    transformListenerRef.current = ({ zoom: z }) => {
+      if (postItWrapperRef.current) {
+        postItWrapperRef.current.style.transform = `translate(-50%, -50%) scale(${z})`;
       }
     };
-  }, [isPlacing, boardPos]);
 
-  // ── Canvas helpers ────────────────────────────────────────────
+    return () => {
+      transformListenerRef.current = null;
+    };
+  }, [isPlacing]);
+
+  // ── Long-press ──────────────────────────────────────────────
+
+  const cancelLongPress = useCallback(() => {
+    clearTimeout(longPressTimer.current);
+    clearInterval(longPressInterval.current);
+    setLongPressProgress(0);
+  }, []);
+
+  const startLongPress = useCallback(() => {
+    cancelLongPress();
+    longPressStart.current = Date.now();
+    longPressInterval.current = setInterval(() => {
+      const elapsed = Date.now() - longPressStart.current;
+      setLongPressProgress(Math.min(elapsed / LONG_PRESS_MS, 1));
+    }, 16);
+    longPressTimer.current = setTimeout(async () => {
+      cancelLongPress();
+      setLongPressProgress(1);
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+      const boardCoords = screenToBoard(cx, cy);
+      await handlePost(boardCoords.x, boardCoords.y);
+    }, LONG_PRESS_MS);
+  }, [screenToBoard, cancelLongPress]);
+
+  // ── Canvas helpers ──────────────────────────────────────────
 
   const getCanvasCoordinates = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    // Support both mouse and touch events
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    // Scale from CSS pixels to canvas pixels (needed because maxWidth: 100% shrinks the canvas)
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return {
@@ -103,17 +129,14 @@ function Draw() {
 
   const startDrawing = (e) => {
     if (e.cancelable) e.preventDefault();
-    const coords = getCanvasCoordinates(e);
     setIsDrawing(true);
-    setCurrentPath([coords]);
+    setCurrentPath([getCanvasCoordinates(e)]);
   };
-
   const draw = (e) => {
     if (!isDrawing) return;
     if (e.cancelable) e.preventDefault();
     setCurrentPath((prev) => [...prev, getCanvasCoordinates(e)]);
   };
-
   const stopDrawing = () => {
     if (isDrawing && currentPath.length > 0) {
       setPaths((prev) => [
@@ -130,7 +153,6 @@ function Draw() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
     [
       ...paths,
       currentPath.length > 1
@@ -169,7 +191,6 @@ function Draw() {
   });
 
   const getCanvasSize = () => ({ S: 400, M: 500, L: 600 })[size] ?? 400;
-
   const getPostItColor = () =>
     ({ Y: "#fef08a", P: "#fbcfe8", B: "#bfdbfe" })[color] ?? "#fef08a";
 
@@ -181,7 +202,11 @@ function Draw() {
     e.stopPropagation();
     setDrawingData(generateDrawingData());
     setIsPlacing(true);
-    setIsBoardInteractive(true);
+  }
+
+  function cancelPlacement() {
+    cancelLongPress();
+    setIsPlacing(false);
   }
 
   async function handlePost(x, y) {
@@ -196,9 +221,7 @@ function Draw() {
       expiration: "30 days",
       protected: protected_,
     };
-
     setIsCheckingOut(true);
-
     try {
       const res = await fetch(
         `${import.meta.env.VITE_API_URL}/stripe/create-checkout-session`,
@@ -216,24 +239,43 @@ function Draw() {
       alert("Failed to start checkout");
       setIsCheckingOut(false);
       setIsPlacing(false);
-      setIsBoardInteractive(false);
     }
   }
 
   if (loading) return <div className="p-8 text-center">Loading...</div>;
   if (!user) {
     navigate("/");
-    return <div className="p-8 text-center">Redirecting to login...</div>;
+    return <div className="p-8 text-center">Redirecting...</div>;
   }
 
   const canvasPx = getCanvasSize();
+  const RING_R = 36;
+  const RING_CIRC = 2 * Math.PI * RING_R;
 
   return (
     <>
       <style>{`
-        @keyframes heartbeat {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 0.7; }
+        @keyframes popIn {
+          0%   { opacity: 0; transform: scale(0.82); }
+          65%  { transform: scale(1.05); }
+          82%  { transform: scale(0.97); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+        @keyframes march {
+          from { stroke-dashoffset: 20; }
+          to   { stroke-dashoffset: 0; }
+        }
+        @keyframes crosshairFade {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+        @keyframes panelSlideUp {
+          from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        @keyframes breathe {
+          0%, 100% { transform: scale(1); }
+          50%       { transform: scale(1.018); }
         }
       `}</style>
 
@@ -241,41 +283,186 @@ function Draw() {
 
       {/* ── Placement mode ── */}
       {isPlacing && drawingData && (
-        <div
-          className="fixed pointer-events-none z-50"
-          style={{
-            left: `${mousePos.x}px`,
-            top: `${mousePos.y}px`,
-            transform: `translate(-50%, -50%) scale(${zoom})`,
-            animation: "heartbeat 1.5s ease-in-out infinite",
-          }}
-        >
-          <PostIt
-            drawing={drawingData}
-            link={link || null}
-            size={size}
-            color={color}
-            createdAt={new Date().toISOString()}
-            expiresAt={new Date().toISOString()}
-          />
-          <div
-            className="absolute left-1/2 -translate-x-1/2 bg-black text-white px-3 py-1 rounded text-sm whitespace-nowrap"
+        <div className="fixed inset-0 z-50 pointer-events-none">
+          {/* Marching-ant crosshair */}
+          <svg
+            className="absolute inset-0 w-full h-full"
             style={{
-              bottom: `${-32 / zoom}px`,
-              transform: `translateX(-50%) scale(${1 / zoom})`,
-              transformOrigin: "top center",
+              animation: "crosshairFade 0.5s ease forwards",
+              opacity: 0,
             }}
           >
-            Click to place • ESC to cancel
+            <line
+              x1="50%"
+              y1="0"
+              x2="50%"
+              y2="100%"
+              stroke="black"
+              strokeWidth="1.5"
+              strokeDasharray="10 6"
+              opacity="0.25"
+              style={{ animation: "march 0.5s linear infinite" }}
+            />
+            <line
+              x1="0"
+              y1="50%"
+              x2="100%"
+              y2="50%"
+              stroke="black"
+              strokeWidth="1.5"
+              strokeDasharray="10 6"
+              opacity="0.25"
+              style={{ animation: "march 0.5s linear infinite" }}
+            />
+          </svg>
+
+          {/* Center dot */}
+          <div
+            className="absolute pointer-events-none"
+            style={{
+              left: "50%",
+              top: "50%",
+              transform: "translate(-50%,-50%)",
+            }}
+          >
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "rgba(0,0,0,0.55)",
+                boxShadow:
+                  "0 0 0 2.5px rgba(255,255,255,0.9), 0 0 0 4.5px rgba(0,0,0,0.25)",
+              }}
+            />
+          </div>
+
+          {/*
+            Post-it preview — centered on screen.
+            transform is set here initially then overwritten directly by the
+            transformListenerRef callback — same call stack as Board's DOM
+            update, so scale is always perfectly in sync with the board.
+          */}
+          {/* Outer: owns transform (mutated directly by transformListenerRef — no animation here
+               or CSS animation forwards-fill would override the inline style writes) */}
+          <div
+            ref={postItWrapperRef}
+            className="absolute pointer-events-auto"
+            style={{
+              left: "50%",
+              top: "50%",
+              transform: `translate(-50%, -50%) scale(${zoom})`,
+              transformOrigin: "center center",
+              touchAction: "none",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+            }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              startLongPress();
+            }}
+            onMouseUp={(e) => {
+              e.stopPropagation();
+              cancelLongPress();
+            }}
+            onMouseLeave={cancelLongPress}
+            onTouchStart={(e) => {
+              e.stopPropagation();
+              startLongPress();
+            }}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              cancelLongPress();
+            }}
+            onTouchCancel={cancelLongPress}
+          >
+            {/* Inner: owns animations — isolated so forwards-fill never touches the outer transform */}
+            <div
+              style={{
+                animation:
+                  longPressProgress === 0
+                    ? "popIn 0.45s cubic-bezier(0.22,1,0.36,1) forwards, breathe 2.5s ease-in-out 0.45s infinite"
+                    : "popIn 0.45s cubic-bezier(0.22,1,0.36,1) forwards",
+                transformOrigin: "center center",
+                borderRadius: 4,
+              }}
+            >
+              <PostIt
+                drawing={drawingData}
+                link={null}
+                size={size}
+                color={color}
+                createdAt={new Date().toISOString()}
+                expiresAt={new Date().toISOString()}
+              />
+            </div>
+
+            {/* Long-press progress ring */}
+            <div
+              className="absolute inset-0 flex items-center justify-center pointer-events-none"
+              style={{
+                opacity: longPressProgress > 0 ? 1 : 0,
+                transition: "opacity 0.12s",
+              }}
+            >
+              <svg
+                width={RING_R * 2 + 8}
+                height={RING_R * 2 + 8}
+                style={{ position: "absolute" }}
+              >
+                <circle
+                  cx={RING_R + 4}
+                  cy={RING_R + 4}
+                  r={RING_R}
+                  fill="none"
+                  stroke="rgba(0,0,0,0.15)"
+                  strokeWidth="5"
+                />
+                <circle
+                  cx={RING_R + 4}
+                  cy={RING_R + 4}
+                  r={RING_R}
+                  fill="none"
+                  stroke="rgba(0,0,0,0.85)"
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  strokeDasharray={RING_CIRC}
+                  strokeDashoffset={RING_CIRC * (1 - longPressProgress)}
+                  transform={`rotate(-90 ${RING_R + 4} ${RING_R + 4})`}
+                  style={{ transition: "stroke-dashoffset 0.016s linear" }}
+                />
+              </svg>
+            </div>
+          </div>
+
+          {/* Bottom panel */}
+          <div
+            className="absolute top-30 left-1/2 pointer-events-auto flex flex-col items-center gap-3"
+            style={{
+              animation:
+                "panelSlideUp 0.4s cubic-bezier(0.22,1,0.36,1) forwards",
+              opacity: 0,
+            }}
+          >
+            <div className="bg-black/70 backdrop-blur-sm text-white text-sm px-5 py-2.5 rounded-full shadow-lg whitespace-nowrap">
+              {longPressProgress > 0
+                ? "Keep holding…"
+                : "Pan & zoom the board · Hold post‑it to place"}
+            </div>
+            <button
+              onClick={cancelPlacement}
+              className="bg-white/90 backdrop-blur-sm text-slate-600 px-5 py-2.5 rounded-full shadow-lg text-sm font-medium hover:bg-white transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
 
-      {/* ── Form ── */}
+      {/* ── Draw form ── */}
       {!isPlacing && (
         <div className="px-4 py-6 sm:px-6 max-w-5xl mx-auto">
           <div className="flex flex-col sm:flex-row gap-6 sm:gap-8 items-start">
-            {/* Canvas + brush controls */}
             <div className="flex-shrink-0 w-full sm:w-auto flex flex-col items-center">
               <div
                 className="rounded-lg shadow-lg overflow-hidden"
@@ -297,8 +484,6 @@ function Draw() {
                   style={{ maxWidth: "100%", height: "auto" }}
                 />
               </div>
-
-              {/* Brush controls */}
               <div className="mt-4 w-full space-y-3">
                 <div className="flex gap-2">
                   <button
@@ -316,7 +501,6 @@ function Draw() {
                     Clear
                   </button>
                 </div>
-
                 <div className="flex gap-4 items-center">
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -346,14 +530,11 @@ function Draw() {
               </div>
             </div>
 
-            {/* Form card */}
             <div className="flex-1 w-full bg-white shadow-lg rounded-lg p-5 sm:p-6 space-y-4">
               <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center">
                 Draw a Post-it
               </h1>
-
               <div className="space-y-4">
-                {/* Size + Color */}
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -401,7 +582,6 @@ function Draw() {
                   </div>
                 </div>
 
-                {/* Link */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Link{" "}
@@ -421,7 +601,6 @@ function Draw() {
                   </p>
                 </div>
 
-                {/* Protection */}
                 <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                   <div className="flex items-center gap-2">
                     <input
@@ -438,8 +617,6 @@ function Draw() {
                       Protected{" "}
                       <span className="font-normal text-slate-400">(+$5)</span>
                     </label>
-
-                    {/* Info icon */}
                     <div className="relative">
                       <button
                         type="button"
@@ -462,21 +639,17 @@ function Draw() {
                   </div>
                 </div>
 
-                {/* CTA */}
                 <button
                   onClick={startPlacement}
                   className="w-full px-4 py-3 bg-slate-900 text-white rounded-lg hover:bg-slate-800 active:bg-slate-700 transition-colors font-medium text-sm"
                 >
                   Place on Board — ${totalPrice}
                 </button>
-
-                {/* Disclaimer */}
                 <p className="text-xs text-slate-400 text-center">
                   Your post will be automatically removed from the board after
                   30 days.
                 </p>
               </div>
-
               <p className="text-xs text-slate-400 text-center pt-1">
                 Drawing as:{" "}
                 {[user.given_name, user.family_name]

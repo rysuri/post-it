@@ -1,12 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "../AuthContext";
 import { useBoard } from "../BoardContext";
 import { useNavigate } from "react-router-dom";
 import PostIt from "../components/PostIt";
 import CheckoutRedirectModal from "../components/CheckoutRedirectModal";
 import { Info } from "lucide-react";
+
 const SIZE_PRICES = { S: 1, M: 3, L: 5 };
 const PROTECTION_PRICE = 10;
+const LONG_PRESS_MS = 600;
 
 function Add() {
   const [inputValue, setInputValue] = useState("");
@@ -17,11 +19,18 @@ function Add() {
   const [showProtectionInfo, setShowProtectionInfo] = useState(false);
   const [isPlacing, setIsPlacing] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [boardPos, setBoardPos] = useState({ x: 0, y: 0 });
+
+  const [longPressProgress, setLongPressProgress] = useState(0);
+  const longPressTimer = useRef(null);
+  const longPressInterval = useRef(null);
+  const longPressStart = useRef(null);
+
+  // Outer wrapper — transform mutated directly by transformListenerRef
+  const postItWrapperRef = useRef(null);
 
   const { user, loading } = useAuth();
-  const { screenToBoard, zoom, setIsBoardInteractive } = useBoard();
+  const { screenToBoard, zoom, transformListenerRef, setIsBoardInteractive } =
+    useBoard();
   const navigate = useNavigate();
 
   const totalPrice = SIZE_PRICES[size] + (protected_ ? PROTECTION_PRICE : 0);
@@ -35,45 +44,55 @@ function Add() {
     document.title = "Post-it · makeapost";
   }, []);
 
+  // While placing: enable board interaction and register the live transform listener
   useEffect(() => {
-    if (!isPlacing) return;
-    const handleMouseMove = (e) => {
-      if (isCheckingOut) return;
-      setMousePos({ x: e.clientX, y: e.clientY });
-      setBoardPos(screenToBoard(e.clientX, e.clientY));
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-    return () => window.removeEventListener("mousemove", handleMouseMove);
-  }, [isPlacing, isCheckingOut, screenToBoard]);
+    if (!isPlacing) {
+      setIsBoardInteractive(false);
+      transformListenerRef.current = null;
+      return;
+    }
 
-  useEffect(() => {
-    if (!isPlacing) return;
-    const timer = setTimeout(() => {
-      const handleClick = async (e) => {
-        e.preventDefault();
-        await handlePost(boardPos.x, boardPos.y);
-      };
-      const handleEscape = (e) => {
-        if (e.key === "Escape") {
-          setIsPlacing(false);
-          setIsBoardInteractive(false);
-        }
-      };
-      window.addEventListener("click", handleClick);
-      window.addEventListener("keydown", handleEscape);
-      window._placementCleanup = () => {
-        window.removeEventListener("click", handleClick);
-        window.removeEventListener("keydown", handleEscape);
-      };
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-      if (window._placementCleanup) {
-        window._placementCleanup();
-        delete window._placementCleanup;
+    setIsBoardInteractive(true);
+
+    if (postItWrapperRef.current) {
+      postItWrapperRef.current.style.transform = `translate(-50%, -50%) scale(${zoom})`;
+    }
+
+    transformListenerRef.current = ({ zoom: z }) => {
+      if (postItWrapperRef.current) {
+        postItWrapperRef.current.style.transform = `translate(-50%, -50%) scale(${z})`;
       }
     };
-  }, [isPlacing, boardPos]);
+
+    return () => {
+      transformListenerRef.current = null;
+    };
+  }, [isPlacing]);
+
+  // ── Long-press ──────────────────────────────────────────────
+
+  const cancelLongPress = useCallback(() => {
+    clearTimeout(longPressTimer.current);
+    clearInterval(longPressInterval.current);
+    setLongPressProgress(0);
+  }, []);
+
+  const startLongPress = useCallback(() => {
+    cancelLongPress();
+    longPressStart.current = Date.now();
+    longPressInterval.current = setInterval(() => {
+      const elapsed = Date.now() - longPressStart.current;
+      setLongPressProgress(Math.min(elapsed / LONG_PRESS_MS, 1));
+    }, 16);
+    longPressTimer.current = setTimeout(async () => {
+      cancelLongPress();
+      setLongPressProgress(1);
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+      const boardCoords = screenToBoard(cx, cy);
+      await handlePost(boardCoords.x, boardCoords.y);
+    }, LONG_PRESS_MS);
+  }, [screenToBoard, cancelLongPress]);
 
   function startPlacement(e) {
     if (!inputValue.trim()) {
@@ -82,7 +101,11 @@ function Add() {
     }
     e.stopPropagation();
     setIsPlacing(true);
-    setIsBoardInteractive(true);
+  }
+
+  function cancelPlacement() {
+    cancelLongPress();
+    setIsPlacing(false);
   }
 
   async function handlePost(x, y) {
@@ -96,9 +119,7 @@ function Add() {
       expiration: "30 days",
       protected: protected_,
     };
-
     setIsCheckingOut(true);
-
     try {
       const res = await fetch(
         `${import.meta.env.VITE_API_URL}/stripe/create-checkout-session`,
@@ -116,23 +137,42 @@ function Add() {
       alert("Failed to start checkout");
       setIsCheckingOut(false);
       setIsPlacing(false);
-      setIsBoardInteractive(false);
     }
   }
 
   if (loading) return <div className="p-8 text-center">Loading...</div>;
-
   if (!user) {
     navigate("/");
     return <div className="p-8 text-center">Redirecting to login...</div>;
   }
 
+  const RING_R = 36;
+  const RING_CIRC = 2 * Math.PI * RING_R;
+
   return (
     <>
       <style>{`
-        @keyframes heartbeat {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 0.7; }
+        @keyframes popIn {
+          0%   { opacity: 0; transform: scale(0.82); }
+          65%  { transform: scale(1.05); }
+          82%  { transform: scale(0.97); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+        @keyframes breathe {
+          0%, 100% { transform: scale(1); }
+          50%       { transform: scale(1.018); }
+        }
+        @keyframes march {
+          from { stroke-dashoffset: 20; }
+          to   { stroke-dashoffset: 0; }
+        }
+        @keyframes crosshairFade {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+        @keyframes panelSlideUp {
+          from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
       `}</style>
 
@@ -140,32 +180,170 @@ function Add() {
 
       {/* ── Placement mode ── */}
       {isPlacing && (
-        <div
-          className="fixed pointer-events-none z-50"
-          style={{
-            left: `${mousePos.x}px`,
-            top: `${mousePos.y}px`,
-            transform: `translate(-50%, -50%) scale(${zoom})`,
-            animation: "heartbeat 1.5s ease-in-out infinite",
-          }}
-        >
-          <PostIt
-            message={inputValue}
-            link={link || null}
-            size={size}
-            color={color}
-            createdAt={new Date().toISOString()}
-            expiresAt={new Date().toISOString()}
-          />
-          <div
-            className="absolute left-1/2 -translate-x-1/2 bg-black text-white px-3 py-1 rounded text-sm whitespace-nowrap"
+        <div className="fixed inset-0 z-50 pointer-events-none">
+          {/* Marching-ant crosshair */}
+          <svg
+            className="absolute inset-0 w-full h-full"
             style={{
-              bottom: `${-32 / zoom}px`,
-              transform: `translateX(-50%) scale(${1 / zoom})`,
-              transformOrigin: "top center",
+              animation: "crosshairFade 0.5s ease forwards",
+              opacity: 0,
             }}
           >
-            Click to place • ESC to cancel
+            <line
+              x1="50%"
+              y1="0"
+              x2="50%"
+              y2="100%"
+              stroke="black"
+              strokeWidth="1.5"
+              strokeDasharray="10 6"
+              opacity="0.25"
+              style={{ animation: "march 0.5s linear infinite" }}
+            />
+            <line
+              x1="0"
+              y1="50%"
+              x2="100%"
+              y2="50%"
+              stroke="black"
+              strokeWidth="1.5"
+              strokeDasharray="10 6"
+              opacity="0.25"
+              style={{ animation: "march 0.5s linear infinite" }}
+            />
+          </svg>
+
+          {/* Center dot */}
+          <div
+            className="absolute pointer-events-none"
+            style={{
+              left: "50%",
+              top: "50%",
+              transform: "translate(-50%,-50%)",
+            }}
+          >
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "rgba(0,0,0,0.55)",
+                boxShadow:
+                  "0 0 0 2.5px rgba(255,255,255,0.9), 0 0 0 4.5px rgba(0,0,0,0.25)",
+              }}
+            />
+          </div>
+
+          {/* Outer: owns transform — no animation so inline style writes are never overridden */}
+          <div
+            ref={postItWrapperRef}
+            className="absolute pointer-events-auto"
+            style={{
+              left: "50%",
+              top: "50%",
+              transform: `translate(-50%, -50%) scale(${zoom})`,
+              transformOrigin: "center center",
+              touchAction: "none",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+            }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              startLongPress();
+            }}
+            onMouseUp={(e) => {
+              e.stopPropagation();
+              cancelLongPress();
+            }}
+            onMouseLeave={cancelLongPress}
+            onTouchStart={(e) => {
+              e.stopPropagation();
+              startLongPress();
+            }}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              cancelLongPress();
+            }}
+            onTouchCancel={cancelLongPress}
+          >
+            {/* Inner: owns animations — isolated so forwards-fill never touches outer transform */}
+            <div
+              style={{
+                animation:
+                  longPressProgress === 0
+                    ? "popIn 0.45s cubic-bezier(0.22,1,0.36,1) forwards, breathe 2.5s ease-in-out 0.45s infinite"
+                    : "popIn 0.45s cubic-bezier(0.22,1,0.36,1) forwards",
+                transformOrigin: "center center",
+              }}
+            >
+              <PostIt
+                message={inputValue}
+                link={link || null}
+                size={size}
+                color={color}
+                createdAt={new Date().toISOString()}
+                expiresAt={new Date().toISOString()}
+              />
+            </div>
+
+            {/* Long-press progress ring */}
+            <div
+              className="absolute inset-0 flex items-center justify-center pointer-events-none"
+              style={{
+                opacity: longPressProgress > 0 ? 1 : 0,
+                transition: "opacity 0.12s",
+              }}
+            >
+              <svg
+                width={RING_R * 2 + 8}
+                height={RING_R * 2 + 8}
+                style={{ position: "absolute" }}
+              >
+                <circle
+                  cx={RING_R + 4}
+                  cy={RING_R + 4}
+                  r={RING_R}
+                  fill="none"
+                  stroke="rgba(0,0,0,0.15)"
+                  strokeWidth="5"
+                />
+                <circle
+                  cx={RING_R + 4}
+                  cy={RING_R + 4}
+                  r={RING_R}
+                  fill="none"
+                  stroke="rgba(0,0,0,0.85)"
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  strokeDasharray={RING_CIRC}
+                  strokeDashoffset={RING_CIRC * (1 - longPressProgress)}
+                  transform={`rotate(-90 ${RING_R + 4} ${RING_R + 4})`}
+                  style={{ transition: "stroke-dashoffset 0.016s linear" }}
+                />
+              </svg>
+            </div>
+          </div>
+
+          {/* Bottom panel */}
+          <div
+            className="absolute top-30 left-1/2 pointer-events-auto flex flex-col items-center gap-3"
+            style={{
+              animation:
+                "panelSlideUp 0.4s cubic-bezier(0.22,1,0.36,1) forwards",
+              opacity: 0,
+            }}
+          >
+            <div className="bg-black/70 backdrop-blur-sm text-white text-sm px-5 py-2.5 rounded-full shadow-lg whitespace-nowrap">
+              {longPressProgress > 0
+                ? "Keep holding…"
+                : "Pan & zoom the board · Hold post‑it to place"}
+            </div>
+            <button
+              onClick={cancelPlacement}
+              className="bg-white/90 backdrop-blur-sm text-slate-600 px-5 py-2.5 rounded-full shadow-lg text-sm font-medium hover:bg-white transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
@@ -193,7 +371,6 @@ function Add() {
               </h1>
 
               <div className="space-y-4">
-                {/* Message */}
                 <textarea
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
@@ -202,7 +379,6 @@ function Add() {
                   rows={4}
                 />
 
-                {/* Size + Color */}
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -234,7 +410,6 @@ function Add() {
                   </div>
                 </div>
 
-                {/* Link */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Link{" "}
@@ -254,7 +429,6 @@ function Add() {
                   </p>
                 </div>
 
-                {/* Protection */}
                 <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                   <div className="flex items-center gap-2">
                     <input
@@ -271,8 +445,6 @@ function Add() {
                       Protected{" "}
                       <span className="font-normal text-slate-400">(+$5)</span>
                     </label>
-
-                    {/* Info icon */}
                     <div className="relative">
                       <button
                         type="button"
@@ -295,7 +467,6 @@ function Add() {
                   </div>
                 </div>
 
-                {/* CTA */}
                 <button
                   onClick={startPlacement}
                   className="w-full px-4 py-3 bg-slate-900 text-white rounded-lg hover:bg-slate-800 active:bg-slate-700 transition-colors font-medium text-sm"
@@ -303,7 +474,6 @@ function Add() {
                   Place on Board — ${totalPrice}
                 </button>
 
-                {/* Disclaimer */}
                 <p className="text-xs text-slate-400 text-center">
                   Your post will be automatically removed from the board after
                   30 days.

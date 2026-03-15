@@ -6,7 +6,7 @@ function CheckoutRedirectModal({ isOpen }) {
 
   const modalContent = (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-fadeIn"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-fadeIn select-none"
       style={{ margin: 0 }}
     >
       <div className="absolute inset-0 bg-black/70" />

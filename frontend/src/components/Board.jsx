@@ -18,8 +18,6 @@ function Board() {
   // ── Refs for gesture state (no re-renders during drag/pinch) ──
   const pointers = useRef(new Map());
   const lastPinchDistance = useRef(null);
-  const panRef = useRef({ x: 0, y: 0 });
-  const zoomRef = useRef(1);
   // Track displayed zoom for the zoom % indicator without re-rendering the whole board
   const [displayZoom, setDisplayZoom] = useState(1);
 
@@ -28,6 +26,9 @@ function Board() {
     setZoom,
     pan,
     setPan,
+    zoomRef,
+    panRef,
+    transformListenerRef,
     BOARD_WIDTH,
     BOARD_HEIGHT,
     refreshTrigger,
@@ -36,7 +37,7 @@ function Board() {
 
   // Sync context values into refs on mount only
   useEffect(() => {
-    panRef.current = pan;
+    panRef.current = { ...pan };
     zoomRef.current = zoom;
     setDisplayZoom(zoom);
     applyTransform();
@@ -82,11 +83,14 @@ function Board() {
   }, [setZoom]);
 
   // Apply transform directly to DOM — zero React re-renders
+  // Also synchronously notifies any registered placement listener
   const applyTransform = useCallback(() => {
     if (!boardInnerRef.current) return;
     const { x, y } = panRef.current;
     const z = zoomRef.current;
     boardInnerRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${z})`;
+    // Same call stack as board DOM update — zero lag guaranteed
+    transformListenerRef.current?.({ zoom: z, pan: { x, y } });
   }, []); // stable — only uses refs
 
   // Commit ref values to context state
@@ -360,8 +364,6 @@ function Board() {
         >
           {posts
             .filter((post) => {
-              // Convert viewport bounds into board space, with padding so
-              // posts don't pop in/out at the exact edge
               const padding = 300;
               const vLeft = (-pan.x - padding) / zoom;
               const vTop = (-pan.y - padding) / zoom;
