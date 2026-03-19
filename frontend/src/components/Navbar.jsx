@@ -26,7 +26,7 @@ function Navbar() {
             Report
           </Link>
           <Link to="/operations" className="px-4 py-2">
-            Operations
+            Post
           </Link>
 
           {!loading && (

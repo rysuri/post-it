@@ -70,7 +70,7 @@ router.post("/create-checkout-session", async (req, res) => {
 
     const unverifiedPostId = result.rows[0].id;
 
-    // Build line items — base size + optional protection add-on
+    // Build line items
     const lineItems = [{ price: priceId, quantity: 1 }];
 
     if (isProtected) {

@@ -31,8 +31,6 @@ function Draw() {
   const longPressInterval = useRef(null);
   const longPressStart = useRef(null);
 
-  // Direct DOM ref for the post-it wrapper — we write transform here
-  // synchronously from the board's applyTransform, zero lag
   const postItWrapperRef = useRef(null);
 
   const canvasRef = useRef(null);
@@ -57,8 +55,6 @@ function Draw() {
     document.title = "Draw · makeapost";
   }, []);
 
-  // While placing: board is interactive, and we hook into its applyTransform
-  // to update the post-it's scale in the same call stack — zero lag
   useEffect(() => {
     if (!isPlacing) {
       setIsBoardInteractive(false);
@@ -67,14 +63,9 @@ function Draw() {
     }
 
     setIsBoardInteractive(true);
-
-    // Set initial transform from current board state
     if (postItWrapperRef.current) {
       postItWrapperRef.current.style.transform = `translate(-50%, -50%) scale(${zoom})`;
     }
-
-    // Register listener — called synchronously inside Board's applyTransform
-    // every wheel tick and every pointer move, same frame as board DOM update
     transformListenerRef.current = ({ zoom: z }) => {
       if (postItWrapperRef.current) {
         postItWrapperRef.current.style.transform = `translate(-50%, -50%) scale(${z})`;
@@ -337,14 +328,6 @@ function Draw() {
             />
           </div>
 
-          {/*
-            Post-it preview — centered on screen.
-            transform is set here initially then overwritten directly by the
-            transformListenerRef callback — same call stack as Board's DOM
-            update, so scale is always perfectly in sync with the board.
-          */}
-          {/* Outer: owns transform (mutated directly by transformListenerRef — no animation here
-               or CSS animation forwards-fill would override the inline style writes) */}
           <div
             ref={postItWrapperRef}
             className="absolute pointer-events-auto"
@@ -376,7 +359,6 @@ function Draw() {
             }}
             onTouchCancel={cancelLongPress}
           >
-            {/* Inner: owns animations — isolated so forwards-fill never touches the outer transform */}
             <div
               style={{
                 animation:

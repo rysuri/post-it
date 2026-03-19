@@ -266,7 +266,6 @@ function Add() {
             }}
             onTouchCancel={cancelLongPress}
           >
-            {/* Inner: owns animations — isolated so forwards-fill never touches outer transform */}
             <div
               style={{
                 animation:

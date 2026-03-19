@@ -18,7 +18,9 @@ function Operations() {
       >
         <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-4 bg-white/40 rounded-sm shadow-sm" />
         <div className="flex-1 flex items-center justify-center">
-          <span className="text-2xl font-semibold text-gray-800">Draw</span>
+          <span className="text-2xl font-semibold text-gray-800">
+            Draw a picture
+          </span>
         </div>
       </Link>
 
@@ -34,7 +36,7 @@ function Operations() {
         <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-4 bg-white/40 rounded-sm shadow-sm" />
         <div className="flex-1 flex items-center justify-center">
           <span className="text-2xl font-semibold text-gray-800">
-            Make a post
+            Write a message
           </span>
         </div>
       </Link>
