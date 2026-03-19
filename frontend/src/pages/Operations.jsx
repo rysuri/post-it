@@ -3,7 +3,7 @@ import { useEffect } from "react";
 
 function Operations() {
   useEffect(() => {
-    document.title = "Operations · makeapost";
+    document.title = "Make a post · makeapost";
   }, []);
   return (
     <div className="flex flex-col sm:flex-row gap-8 justify-center items-center">
