@@ -3,6 +3,19 @@ import { useRef, useEffect, useState } from "react";
 import LinkWarningModal from "./Linkwarningmodal";
 import { ShieldCheck } from "lucide-react";
 
+// Ensure Caveat is loaded — matches the font used in Add.jsx / Draw.jsx step 2
+if (
+  typeof document !== "undefined" &&
+  !document.getElementById("caveat-font")
+) {
+  const link = document.createElement("link");
+  link.id = "caveat-font";
+  link.rel = "stylesheet";
+  link.href =
+    "https://fonts.googleapis.com/css2?family=Caveat:wght@400;600&display=swap";
+  document.head.appendChild(link);
+}
+
 function PostIt({
   message,
   drawing,
@@ -40,15 +53,13 @@ function PostIt({
 
         ctx.beginPath();
         ctx.moveTo(path.points[0].x, path.points[0].y);
-
         for (let i = 1; i < path.points.length; i++) {
           ctx.lineTo(path.points[i].x, path.points[i].y);
         }
-
         ctx.stroke();
       });
     }
-  }, [drawing]);
+  }, [drawing]); // re-render when size changes too
 
   const sizeClasses = {
     S: "w-32 h-32",
@@ -56,11 +67,9 @@ function PostIt({
     L: "w-64 h-64",
   };
 
-  const textSizeClasses = {
-    S: "text-sm",
-    M: "text-base",
-    L: "text-lg",
-  };
+  // Must stay in sync with POSTIT_FONT / POSTIT_PAD in Add.jsx (and Draw.jsx)
+  const messageFontSize = { S: 11, M: 13, L: 15 }[size] ?? 13;
+  const messagePad = { S: 10, M: 12, L: 16 }[size] ?? 12;
 
   const colorClasses = {
     Y: "bg-yellow-200 shadow-yellow-300/50",
@@ -110,7 +119,7 @@ function PostIt({
             select-none
           `}
           style={{
-            fontFamily: "'Indie Flower', cursive, sans-serif",
+            fontFamily: "'Caveat', cursive",
             ...protectedStyle,
           }}
         >
@@ -150,12 +159,23 @@ function PostIt({
             </div>
           )}
 
-          <div
-            className={`w-full h-full flex items-center justify-center ${message ? "p-3" : ""}`}
-          >
+          <div className="w-full h-full">
             {message && (
               <p
-                className={`text-gray-800 leading-relaxed text-center break-words overflow-hidden ${textSizeClasses[size] || textSizeClasses.S}`}
+                style={{
+                  padding: messagePad,
+                  fontFamily: "'Caveat', cursive",
+                  fontSize: messageFontSize,
+                  lineHeight: 1.4,
+                  color: "rgba(0,0,0,0.8)",
+                  whiteSpace: "pre-wrap", // preserves spaces & newlines (ASCII art)
+                  wordBreak: "break-word",
+                  overflow: "hidden",
+                  width: "100%",
+                  height: "100%",
+                  boxSizing: "border-box",
+                  margin: 0,
+                }}
               >
                 {message}
               </p>
@@ -165,10 +185,8 @@ function PostIt({
                 ref={canvasRef}
                 style={{
                   display: "block",
-                  maxWidth: "100%",
-                  maxHeight: "100%",
-                  width: "auto",
-                  height: "auto",
+                  width: "100%",
+                  height: "100%",
                 }}
               />
             )}

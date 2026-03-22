@@ -4,48 +4,121 @@ import { useBoard } from "../BoardContext";
 import { useNavigate } from "react-router-dom";
 import PostIt from "../components/PostIt";
 import CheckoutRedirectModal from "../components/CheckoutRedirectModal";
-import { Info } from "lucide-react";
+import { Info, ArrowLeft, ArrowRight, Undo2, Trash2 } from "lucide-react";
 import simplify from "simplify-js";
 
 const SIZE_PRICES = { S: 1, M: 3, L: 5 };
 const PROTECTION_PRICE = 10;
 const LONG_PRESS_MS = 600;
 
+const COLOR_CONFIG = {
+  Y: { bg: "#FEF08A", label: "Yellow" },
+  P: { bg: "#FBCFE8", label: "Pink" },
+  B: { bg: "#BAE6FD", label: "Blue" },
+};
+
+const SIZE_CONFIG = {
+  S: { px: 120, canvas: 400, icon: 28, label: "Small", price: 1 },
+  M: { px: 160, canvas: 500, icon: 42, label: "Medium", price: 3 },
+  L: { px: 220, canvas: 600, icon: 58, label: "Large", price: 5 },
+};
+
+// Brush presets
+const BRUSH_PRESETS = [
+  { size: 2, label: "Fine" },
+  { size: 5, label: "Medium" },
+  { size: 10, label: "Thick" },
+  { size: 18, label: "Bold" },
+];
+
+// Palette offered inside the drawing step
+const PALETTE = [
+  "#000000",
+  "#374151",
+  "#dc2626",
+  "#ea580c",
+  "#ca8a04",
+  "#16a34a",
+  "#2563eb",
+  "#7c3aed",
+  "#db2777",
+  "#ffffff",
+];
+
+// Board-space half-sizes — must match PostIt's Tailwind classes exactly
+const HALF_SIZE = { S: 64, M: 96, L: 128 };
+
+function overlapsProtected(x, y, size, p) {
+  return (
+    Math.abs(x - p.position_x) < HALF_SIZE[size] + HALF_SIZE[p.size] &&
+    Math.abs(y - p.position_y) < HALF_SIZE[size] + HALF_SIZE[p.size]
+  );
+}
+
+// ─── Step dots ──────────────────────────────────────────────────────────────
+function StepDots({ step }) {
+  return (
+    <div className="flex items-center justify-center gap-2 mb-8">
+      {[1, 2, 3].map((n) => (
+        <div
+          key={n}
+          className="rounded-full transition-all duration-300"
+          style={{
+            width: n === step ? 24 : 8,
+            height: 8,
+            background:
+              n === step ? "#0f172a" : n < step ? "#94a3b8" : "#e2e8f0",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Main component ─────────────────────────────────────────────────────────
 function Draw() {
+  const [step, setStep] = useState(1);
+  const [stepKey, setStepKey] = useState(0);
+
   const [size, setSize] = useState("S");
   const [color, setColor] = useState("Y");
   const [link, setLink] = useState("");
   const [protected_, setProtected_] = useState(false);
   const [showProtectionInfo, setShowProtectionInfo] = useState(false);
+
+  // Drawing state
   const [isDrawing, setIsDrawing] = useState(false);
   const [paths, setPaths] = useState([]);
   const [currentPath, setCurrentPath] = useState([]);
   const [brushColor, setBrushColor] = useState("#000000");
-  const [brushSize, setBrushSize] = useState(3);
-  const [isPlacing, setIsPlacing] = useState(false);
-  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [brushSize, setBrushSize] = useState(5);
   const [drawingData, setDrawingData] = useState(null);
 
+  // Placement / checkout
+  const [isPlacing, setIsPlacing] = useState(false);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  // Protected-post overlap checking
+  const [protectedPosts, setProtectedPosts] = useState([]);
+  const [overlapError, setOverlapError] = useState(false);
+  const [isShaking, setIsShaking] = useState(false);
+
   const [longPressProgress, setLongPressProgress] = useState(0);
+
   const longPressTimer = useRef(null);
   const longPressInterval = useRef(null);
   const longPressStart = useRef(null);
-
   const postItWrapperRef = useRef(null);
-
   const canvasRef = useRef(null);
+
   const { user, loading } = useAuth();
-  const {
-    screenToBoard,
-    zoom,
-    pan,
-    transformListenerRef,
-    setIsBoardInteractive,
-  } = useBoard();
+  const { screenToBoard, zoom, transformListenerRef, setIsBoardInteractive } =
+    useBoard();
   const navigate = useNavigate();
 
   const totalPrice = SIZE_PRICES[size] + (protected_ ? PROTECTION_PRICE : 0);
+  const canvasPx = SIZE_CONFIG[size].canvas;
 
+  // ── Board interaction ────────────────────────────────────────────────────
   useEffect(() => {
     setIsBoardInteractive(false);
     return () => setIsBoardInteractive(true);
@@ -61,7 +134,6 @@ function Draw() {
       transformListenerRef.current = null;
       return;
     }
-
     setIsBoardInteractive(true);
     if (postItWrapperRef.current) {
       postItWrapperRef.current.style.transform = `translate(-50%, -50%) scale(${zoom})`;
@@ -71,14 +143,22 @@ function Draw() {
         postItWrapperRef.current.style.transform = `translate(-50%, -50%) scale(${z})`;
       }
     };
-
     return () => {
       transformListenerRef.current = null;
     };
   }, [isPlacing]);
 
-  // ── Long-press ──────────────────────────────────────────────
+  // Fetch protected posts once so frontend can check overlap instantly
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_API_URL}/stripe/protected-posts`, {
+      credentials: "include",
+    })
+      .then((r) => r.json())
+      .then((data) => setProtectedPosts(data.posts ?? []))
+      .catch(() => {});
+  }, []);
 
+  // ── Long-press ───────────────────────────────────────────────────────────
   const cancelLongPress = useCallback(() => {
     clearTimeout(longPressTimer.current);
     clearInterval(longPressInterval.current);
@@ -97,36 +177,33 @@ function Draw() {
       setLongPressProgress(1);
       const cx = window.innerWidth / 2;
       const cy = window.innerHeight / 2;
-      const boardCoords = screenToBoard(cx, cy);
-      await handlePost(boardCoords.x, boardCoords.y);
+      const { x, y } = screenToBoard(cx, cy);
+      await handlePost(x, y);
     }, LONG_PRESS_MS);
   }, [screenToBoard, cancelLongPress]);
 
-  // ── Canvas helpers ──────────────────────────────────────────
-
-  const getCanvasCoordinates = (e) => {
+  // ── Canvas drawing ───────────────────────────────────────────────────────
+  const getCoords = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY,
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height),
     };
   };
 
   const startDrawing = (e) => {
     if (e.cancelable) e.preventDefault();
     setIsDrawing(true);
-    setCurrentPath([getCanvasCoordinates(e)]);
+    setCurrentPath([getCoords(e)]);
   };
   const draw = (e) => {
     if (!isDrawing) return;
     if (e.cancelable) e.preventDefault();
-    setCurrentPath((prev) => [...prev, getCanvasCoordinates(e)]);
+    setCurrentPath((prev) => [...prev, getCoords(e)]);
   };
   const stopDrawing = () => {
     if (isDrawing && currentPath.length > 0) {
@@ -139,7 +216,8 @@ function Draw() {
     setIsDrawing(false);
   };
 
-  useEffect(() => {
+  // Extracted so it can be called both reactively and imperatively (on remount)
+  const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -165,6 +243,17 @@ function Draw() {
       });
   }, [paths, currentPath, brushColor, brushSize]);
 
+  // Redraw whenever drawing state changes
+  useEffect(() => {
+    redrawCanvas();
+  }, [redrawCanvas]);
+
+  // Repaint after returning to step 2 — the canvas remounts due to the animation
+  // key change so its pixels are blank even though `paths` state is intact.
+  useEffect(() => {
+    if (step === 2) redrawCanvas();
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const clearCanvas = () => {
     setPaths([]);
     setCurrentPath([]);
@@ -177,30 +266,63 @@ function Draw() {
         ? path
         : { ...path, points: simplify(path.points, 1.1, true) },
     ),
-    width: canvasRef.current?.width || 400,
-    height: canvasRef.current?.height || 400,
+    width: canvasRef.current?.width || canvasPx,
+    height: canvasRef.current?.height || canvasPx,
   });
 
-  const getCanvasSize = () => ({ S: 400, M: 500, L: 600 })[size] ?? 400;
-  const getPostItColor = () =>
-    ({ Y: "#fef08a", P: "#fbcfe8", B: "#bfdbfe" })[color] ?? "#fef08a";
-
-  function startPlacement(e) {
-    if (paths.length === 0) {
-      alert("Please draw something first!");
-      return;
-    }
-    e.stopPropagation();
-    setDrawingData(generateDrawingData());
-    setIsPlacing(true);
+  // ── Navigation ───────────────────────────────────────────────────────────
+  function goToStep(n) {
+    setStep(n);
+    setStepKey((k) => k + 1);
   }
 
+  function handleSizeChange(newSize) {
+    const oldPx = SIZE_CONFIG[size].canvas;
+    const newPx = SIZE_CONFIG[newSize].canvas;
+    const ratio = newPx / oldPx;
+    // Scale existing strokes proportionally so they still look right
+    setPaths((prev) =>
+      prev.map((path) => ({
+        ...path,
+        points: path.points.map((p) => ({ x: p.x * ratio, y: p.y * ratio })),
+      })),
+    );
+    setSize(newSize);
+  }
+
+  function handleNextFromStep2() {
+    if (paths.length === 0) {
+      // Subtle: just return — the empty-state hint in the canvas area is enough
+      return;
+    }
+    goToStep(3);
+  }
+
+  // ── Placement / checkout ─────────────────────────────────────────────────
   function cancelPlacement() {
     cancelLongPress();
     setIsPlacing(false);
+    setOverlapError(false);
+    setIsShaking(false);
   }
 
   async function handlePost(x, y) {
+    // ── Frontend overlap check ───────────────────────────────────────────
+    const blocked = protectedPosts.some((p) =>
+      overlapsProtected(x, y, size, p),
+    );
+    if (blocked) {
+      setOverlapError(true);
+      setIsShaking(true);
+      setTimeout(() => setIsShaking(false), 600);
+      setTimeout(() => setOverlapError(false), 2000);
+      cancelLongPress();
+      return;
+    }
+
+    setOverlapError(false);
+    setIsCheckingOut(true);
+
     const payload = {
       message: null,
       drawing: drawingData,
@@ -212,7 +334,6 @@ function Draw() {
       expiration: "30 days",
       protected: protected_,
     };
-    setIsCheckingOut(true);
     try {
       const res = await fetch(
         `${import.meta.env.VITE_API_URL}/stripe/create-checkout-session`,
@@ -223,23 +344,38 @@ function Draw() {
           credentials: "include",
         },
       );
+
+      // ── Backend authoritative check ──────────────────────────────────
+      if (res.status === 409) {
+        const body = await res.json();
+        if (body.code === "PROTECTED_OVERLAP") {
+          setOverlapError(true);
+          setIsShaking(true);
+          setTimeout(() => setIsShaking(false), 600);
+          setTimeout(() => setOverlapError(false), 2000);
+          setIsCheckingOut(false);
+          return;
+        }
+      }
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { url } = await res.json();
       window.location.href = url;
-    } catch (error) {
-      console.error("Checkout error:", error);
+    } catch (err) {
+      console.error("Checkout error:", err);
       alert("Failed to start checkout");
       setIsCheckingOut(false);
       setIsPlacing(false);
     }
   }
 
-  if (loading) return <div className="p-8 text-center">Loading...</div>;
+  // ── Guards ───────────────────────────────────────────────────────────────
+  if (loading) return <div className="p-8 text-center">Loading…</div>;
   if (!user) {
     navigate("/");
-    return <div className="p-8 text-center">Redirecting...</div>;
+    return <div className="p-8 text-center">Redirecting…</div>;
   }
 
-  const canvasPx = getCanvasSize();
   const RING_R = 36;
   const RING_CIRC = 2 * Math.PI * RING_R;
 
@@ -252,9 +388,13 @@ function Draw() {
           82%  { transform: scale(0.97); }
           100% { opacity: 1; transform: scale(1); }
         }
+        @keyframes breathe {
+          0%, 100% { transform: scale(1);     }
+          50%       { transform: scale(1.018); }
+        }
         @keyframes march {
           from { stroke-dashoffset: 20; }
-          to   { stroke-dashoffset: 0; }
+          to   { stroke-dashoffset: 0;  }
         }
         @keyframes crosshairFade {
           from { opacity: 0; }
@@ -262,20 +402,36 @@ function Draw() {
         }
         @keyframes panelSlideUp {
           from { opacity: 0; transform: translateX(-50%) translateY(12px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+          to   { opacity: 1; transform: translateX(-50%) translateY(0);    }
         }
-        @keyframes breathe {
-          0%, 100% { transform: scale(1); }
-          50%       { transform: scale(1.018); }
+        @keyframes stepIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0);    }
+        }
+        .step-content { animation: stepIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+        @keyframes shake {
+          0%       { transform: translate(-50%,-50%) scale(var(--pz,1)) translateX(0); }
+          10%, 90% { transform: translate(-50%,-50%) scale(var(--pz,1)) translateX(-8px) rotate(-1.5deg); }
+          20%, 80% { transform: translate(-50%,-50%) scale(var(--pz,1)) translateX(8px)  rotate(1.5deg);  }
+          30%, 70% { transform: translate(-50%,-50%) scale(var(--pz,1)) translateX(-6px) rotate(-1deg);   }
+          40%, 60% { transform: translate(-50%,-50%) scale(var(--pz,1)) translateX(6px)  rotate(1deg);    }
+          50%      { transform: translate(-50%,-50%) scale(var(--pz,1)) translateX(-3px); }
+          100%     { transform: translate(-50%,-50%) scale(var(--pz,1)) translateX(0); }
+        }
+        @keyframes blockedPulse {
+          0%, 100% { opacity: 0.55; }
+          50%      { opacity: 0.9;  }
         }
       `}</style>
 
       <CheckoutRedirectModal isOpen={isCheckingOut} />
 
-      {/* ── Placement mode ── */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          PLACEMENT MODE
+      ═══════════════════════════════════════════════════════════════════ */}
       {isPlacing && drawingData && (
         <div className="fixed inset-0 z-50 pointer-events-none">
-          {/* Marching-ant crosshair */}
+          {/* Crosshair — turns red when placement is blocked */}
           <svg
             className="absolute inset-0 w-full h-full"
             style={{
@@ -288,26 +444,31 @@ function Draw() {
               y1="0"
               x2="50%"
               y2="100%"
-              stroke="black"
+              stroke={overlapError ? "#ef4444" : "black"}
               strokeWidth="1.5"
               strokeDasharray="10 6"
-              opacity="0.25"
-              style={{ animation: "march 0.5s linear infinite" }}
+              opacity={overlapError ? "0.5" : "0.25"}
+              style={{
+                animation: "march 0.5s linear infinite",
+                transition: "stroke 0.25s",
+              }}
             />
             <line
               x1="0"
               y1="50%"
               x2="100%"
               y2="50%"
-              stroke="black"
+              stroke={overlapError ? "#ef4444" : "black"}
               strokeWidth="1.5"
               strokeDasharray="10 6"
-              opacity="0.25"
-              style={{ animation: "march 0.5s linear infinite" }}
+              opacity={overlapError ? "0.5" : "0.25"}
+              style={{
+                animation: "march 0.5s linear infinite",
+                transition: "stroke 0.25s",
+              }}
             />
           </svg>
 
-          {/* Center dot */}
           <div
             className="absolute pointer-events-none"
             style={{
@@ -334,11 +495,17 @@ function Draw() {
             style={{
               left: "50%",
               top: "50%",
-              transform: `translate(-50%, -50%) scale(${zoom})`,
+              "--pz": zoom,
+              transform: isShaking
+                ? undefined
+                : `translate(-50%, -50%) scale(${zoom})`,
               transformOrigin: "center center",
               touchAction: "none",
               userSelect: "none",
               WebkitUserSelect: "none",
+              animation: isShaking
+                ? "shake 0.55s cubic-bezier(0.36,0.07,0.19,0.97) forwards"
+                : "none",
             }}
             onMouseDown={(e) => {
               e.stopPropagation();
@@ -366,7 +533,7 @@ function Draw() {
                     ? "popIn 0.45s cubic-bezier(0.22,1,0.36,1) forwards, breathe 2.5s ease-in-out 0.45s infinite"
                     : "popIn 0.45s cubic-bezier(0.22,1,0.36,1) forwards",
                 transformOrigin: "center center",
-                borderRadius: 4,
+                position: "relative",
               }}
             >
               <PostIt
@@ -374,12 +541,30 @@ function Draw() {
                 link={null}
                 size={size}
                 color={color}
+                isProtected={protected_}
                 createdAt={new Date().toISOString()}
                 expiresAt={new Date().toISOString()}
               />
+
+              {/* Pulsing red overlay when blocked by a protected post */}
+              {overlapError && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    borderRadius: 2,
+                    background: "rgba(220,38,38,0.15)",
+                    border: "2.5px solid rgba(220,38,38,0.85)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    animation: "blockedPulse 1s ease-in-out infinite",
+                    pointerEvents: "none",
+                  }}
+                ></div>
+              )}
             </div>
 
-            {/* Long-press progress ring */}
             <div
               className="absolute inset-0 flex items-center justify-center pointer-events-none"
               style={{
@@ -417,7 +602,6 @@ function Draw() {
             </div>
           </div>
 
-          {/* Bottom panel */}
           <div
             className="absolute top-30 left-1/2 pointer-events-auto flex flex-col items-center gap-3"
             style={{
@@ -426,10 +610,21 @@ function Draw() {
               opacity: 0,
             }}
           >
-            <div className="bg-black/70 backdrop-blur-sm text-white text-sm px-5 py-2.5 rounded-full shadow-lg whitespace-nowrap">
-              {longPressProgress > 0
-                ? "Keep holding…"
-                : "Pan & zoom the board · Hold post‑it to place"}
+            {/* Instruction pill — morphs to red when blocked */}
+            <div
+              className="text-white text-sm px-5 py-2.5 rounded-full shadow-lg backdrop-blur-sm text-center transition-colors duration-300"
+              style={{
+                background: overlapError
+                  ? "rgba(220,38,38,0.88)"
+                  : "rgba(0,0,0,0.70)",
+                maxWidth: "min(90vw, 360px)",
+              }}
+            >
+              {overlapError
+                ? "🛡️ Protected post here — pan to a free spot"
+                : longPressProgress > 0
+                  ? "Keep holding…"
+                  : "Pan & zoom the board · Hold post‑it to place"}
             </div>
             <button
               onClick={cancelPlacement}
@@ -441,150 +636,356 @@ function Draw() {
         </div>
       )}
 
-      {/* ── Draw form ── */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          3-STEP FORM
+      ═══════════════════════════════════════════════════════════════════ */}
       {!isPlacing && (
-        <div className="px-4 py-6 sm:px-6 max-w-5xl mx-auto">
-          <div className="flex flex-col sm:flex-row gap-6 sm:gap-8 items-start">
-            <div className="flex-shrink-0 w-full sm:w-auto flex flex-col items-center">
-              <div
-                className="rounded-lg shadow-lg overflow-hidden"
-                style={{ backgroundColor: getPostItColor() }}
-              >
-                <canvas
-                  ref={canvasRef}
-                  width={canvasPx}
-                  height={canvasPx}
-                  onMouseDown={startDrawing}
-                  onMouseMove={draw}
-                  onMouseUp={stopDrawing}
-                  onMouseLeave={stopDrawing}
-                  onTouchStart={startDrawing}
-                  onTouchMove={draw}
-                  onTouchEnd={stopDrawing}
-                  onTouchCancel={stopDrawing}
-                  className="cursor-crosshair block touch-none"
-                  style={{ maxWidth: "100%", height: "auto" }}
-                />
-              </div>
-              <div className="mt-4 w-full space-y-3">
-                <div className="flex gap-2">
-                  <button
-                    onClick={undo}
-                    disabled={paths.length === 0}
-                    className="flex-1 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Undo
-                  </button>
-                  <button
-                    onClick={clearCanvas}
-                    disabled={paths.length === 0}
-                    className="flex-1 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Clear
-                  </button>
-                </div>
-                <div className="flex gap-4 items-center">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Brush Color
-                    </label>
-                    <input
-                      type="color"
-                      value={brushColor}
-                      onChange={(e) => setBrushColor(e.target.value)}
-                      className="w-full h-10 rounded-lg cursor-pointer"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Brush Size: {brushSize}px
-                    </label>
-                    <input
-                      type="range"
-                      min="1"
-                      max="20"
-                      value={brushSize}
-                      onChange={(e) => setBrushSize(Number(e.target.value))}
-                      className="w-full"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
+        <div className="flex items-start justify-center px-4 py-10 sm:py-14">
+          {/* Step 2 gets more width for the canvas; others stay narrow */}
+          <div
+            className={`w-full transition-all duration-300 ${step === 2 ? "max-w-lg" : "max-w-sm"}`}
+          >
+            <StepDots step={step} />
 
-            <div className="flex-1 w-full bg-white shadow-lg rounded-lg p-5 sm:p-6 space-y-4">
-              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center">
-                Draw a Post-it
-              </h1>
-              <div className="space-y-4">
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
+            <div key={stepKey} className="step-content">
+              {/* ─── STEP 1 · Size & Color ─────────────────────────────── */}
+              {step === 1 && (
+                <div className="space-y-7">
+                  <div className="text-center">
+                    <h1 className="text-2xl font-bold text-slate-900">
+                      Choose your post‑it
+                    </h1>
+                    <p className="text-sm text-slate-500 mt-1">
+                      Pick a size and colour
+                    </p>
+                  </div>
+
+                  {/* Size cards */}
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-3">
                       Size
-                    </label>
-                    <select
-                      value={size}
-                      onChange={(e) => {
-                        const newSize = e.target.value;
-                        const oldPx = getCanvasSize();
-                        const newPx =
-                          { S: 400, M: 500, L: 600 }[newSize] ?? 400;
-                        const ratio = newPx / oldPx;
-                        setPaths((prev) =>
-                          prev.map((path) => ({
-                            ...path,
-                            points: path.points.map((p) => ({
-                              x: p.x * ratio,
-                              y: p.y * ratio,
-                            })),
-                          })),
-                        );
-                        setSize(newSize);
-                      }}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-500 bg-white text-sm"
-                    >
-                      <option value="S">Small ($1)</option>
-                      <option value="M">Medium ($3)</option>
-                      <option value="L">Large ($5)</option>
-                    </select>
+                    </p>
+                    <div className="grid grid-cols-3 gap-3">
+                      {Object.entries(SIZE_CONFIG).map(([key, cfg]) => (
+                        <button
+                          key={key}
+                          onClick={() => handleSizeChange(key)}
+                          className={`flex flex-col items-center justify-end gap-2 p-3 pt-4 rounded-2xl border-2 transition-all duration-200 ${
+                            size === key
+                              ? "border-slate-900 bg-slate-900 text-white shadow-md scale-105"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm"
+                          }`}
+                        >
+                          <div className="flex items-end justify-center h-16">
+                            <div
+                              style={{
+                                width: cfg.icon,
+                                height: cfg.icon,
+                                background: COLOR_CONFIG[color].bg,
+                                boxShadow: "2px 2px 6px rgba(0,0,0,0.15)",
+                                flexShrink: 0,
+                              }}
+                            />
+                          </div>
+                          <span className="text-xs font-semibold leading-none">
+                            {cfg.label}
+                          </span>
+                          <span className="text-xs leading-none text-slate-400">
+                            ${cfg.price}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Color
-                    </label>
-                    <select
-                      value={color}
-                      onChange={(e) => setColor(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-500 bg-white text-sm"
-                    >
-                      <option value="Y">Yellow</option>
-                      <option value="P">Pink</option>
-                      <option value="B">Blue</option>
-                    </select>
-                  </div>
-                </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Link{" "}
-                    <span className="font-normal text-slate-400">
-                      (optional)
-                    </span>
-                  </label>
-                  <input
-                    type="url"
-                    value={link}
-                    onChange={(e) => setLink(e.target.value)}
-                    placeholder="https://example.com"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-500 text-sm"
-                  />
-                  <p className="mt-1 text-xs text-slate-400">
-                    Makes your post-it clickable
+                  {/* Colour swatches */}
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-3">
+                      Colour
+                    </p>
+                    <div className="flex gap-5">
+                      {Object.entries(COLOR_CONFIG).map(([key, cfg]) => (
+                        <button
+                          key={key}
+                          onClick={() => setColor(key)}
+                          className="flex flex-col items-center gap-2 group"
+                          title={cfg.label}
+                        >
+                          <div
+                            className={`rounded-full transition-all duration-200 ${
+                              color === key
+                                ? "scale-110 ring-[3px] ring-offset-2 ring-slate-900"
+                                : "group-hover:scale-105"
+                            }`}
+                            style={{
+                              width: 44,
+                              height: 44,
+                              background: cfg.bg,
+                              boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+                            }}
+                          />
+                          <span
+                            className={`text-xs transition-colors ${
+                              color === key
+                                ? "text-slate-900 font-semibold"
+                                : "text-slate-400"
+                            }`}
+                          >
+                            {cfg.label}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => goToStep(2)}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800 active:bg-slate-700 transition-colors font-medium text-sm"
+                  >
+                    Next <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* ─── STEP 2 · Draw ─────────────────────────────────────── */}
+              {step === 2 && (
+                <div className="space-y-5">
+                  <div className="text-center">
+                    <h1 className="text-2xl font-bold text-slate-900">
+                      Draw your post‑it
+                    </h1>
+                    <p className="text-sm text-slate-500 mt-1">
+                      Use your finger or mouse to draw
+                    </p>
+                  </div>
+
+                  {/* Canvas */}
+                  <div
+                    className="rounded-xl overflow-hidden shadow-lg mx-auto"
+                    style={{
+                      background: COLOR_CONFIG[color].bg,
+                      width: "100%",
+                    }}
+                  >
+                    <canvas
+                      ref={canvasRef}
+                      width={canvasPx}
+                      height={canvasPx}
+                      onMouseDown={startDrawing}
+                      onMouseMove={draw}
+                      onMouseUp={stopDrawing}
+                      onMouseLeave={stopDrawing}
+                      onTouchStart={startDrawing}
+                      onTouchMove={draw}
+                      onTouchEnd={stopDrawing}
+                      onTouchCancel={stopDrawing}
+                      className="cursor-crosshair block touch-none"
+                      style={{
+                        width: "100%",
+                        height: "auto",
+                        display: "block",
+                      }}
+                    />
+                  </div>
+
+                  {/* Toolbar */}
+                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-4">
+                    {/* Colour palette */}
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-2">
+                        Colour
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {PALETTE.map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => setBrushColor(c)}
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: "50%",
+                              background: c,
+                              boxShadow:
+                                brushColor === c
+                                  ? `0 0 0 2px white, 0 0 0 4px ${c === "#ffffff" ? "#94a3b8" : c}`
+                                  : "0 1px 3px rgba(0,0,0,0.2)",
+                              border:
+                                c === "#ffffff" ? "1px solid #e2e8f0" : "none",
+                              flexShrink: 0,
+                              transition: "box-shadow 0.15s",
+                            }}
+                            aria-label={c}
+                          />
+                        ))}
+                        {/* Custom colour picker */}
+                        <label
+                          title="Custom colour"
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: "50%",
+                            background:
+                              "conic-gradient(red, yellow, lime, cyan, blue, magenta, red)",
+                            cursor: "pointer",
+                            flexShrink: 0,
+                            overflow: "hidden",
+                            position: "relative",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                          }}
+                        >
+                          <input
+                            type="color"
+                            value={brushColor}
+                            onChange={(e) => setBrushColor(e.target.value)}
+                            style={{
+                              opacity: 0,
+                              position: "absolute",
+                              inset: 0,
+                              width: "100%",
+                              height: "100%",
+                              cursor: "pointer",
+                            }}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Brush size */}
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-2">
+                        Brush
+                      </p>
+                      <div className="flex gap-2">
+                        {BRUSH_PRESETS.map((b) => (
+                          <button
+                            key={b.size}
+                            onClick={() => setBrushSize(b.size)}
+                            className={`flex-1 flex flex-col items-center gap-1.5 py-2 rounded-xl border-2 transition-all duration-150 ${
+                              brushSize === b.size
+                                ? "border-slate-900 bg-slate-900"
+                                : "border-slate-200 bg-white hover:border-slate-300"
+                            }`}
+                          >
+                            <div
+                              style={{
+                                width: b.size,
+                                height: b.size,
+                                borderRadius: "50%",
+                                background:
+                                  brushSize === b.size ? "#fff" : "#0f172a",
+                                maxWidth: 20,
+                                maxHeight: 20,
+                                minWidth: 4,
+                                minHeight: 4,
+                              }}
+                            />
+                            <span
+                              className={`text-[10px] font-medium leading-none ${
+                                brushSize === b.size
+                                  ? "text-white"
+                                  : "text-slate-500"
+                              }`}
+                            >
+                              {b.label}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Undo / Clear */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={undo}
+                        disabled={paths.length === 0}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" /> Undo
+                      </button>
+                      <button
+                        onClick={clearCanvas}
+                        disabled={paths.length === 0}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Navigation */}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => goToStep(1)}
+                      className="flex items-center gap-1.5 px-4 py-3 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-colors font-medium text-sm"
+                    >
+                      <ArrowLeft className="w-4 h-4" /> Back
+                    </button>
+                    <button
+                      onClick={handleNextFromStep2}
+                      disabled={paths.length === 0}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800 active:bg-slate-700 transition-colors font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Next <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Always reserve the hint's height so it never causes layout shift */}
+                  <p
+                    className="text-xs text-slate-400 text-center transition-opacity duration-200"
+                    style={{
+                      visibility: paths.length === 0 ? "visible" : "hidden",
+                    }}
+                  >
+                    Draw something to continue
                   </p>
                 </div>
+              )}
 
-                <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="flex items-center gap-2">
+              {/* ─── STEP 3 · Link / Protection / Place ───────────────── */}
+              {step === 3 && (
+                <div className="space-y-5">
+                  <div className="text-center">
+                    <h1 className="text-2xl font-bold text-slate-900">
+                      Final details
+                    </h1>
+                    <p className="text-sm text-slate-500 mt-1">Almost there!</p>
+                  </div>
+
+                  {/* Preview */}
+                  <div className="flex justify-center">
+                    <PostIt
+                      drawing={generateDrawingData()}
+                      link={link || null}
+                      size={size}
+                      color={color}
+                      isProtected={protected_}
+                      createdAt={new Date().toISOString()}
+                      expiresAt={new Date().toISOString()}
+                    />
+                  </div>
+
+                  {/* Link */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Link{" "}
+                      <span className="font-normal text-slate-400">
+                        (optional)
+                      </span>
+                    </label>
+                    <input
+                      type="url"
+                      value={link}
+                      onChange={(e) => setLink(e.target.value)}
+                      placeholder="https://example.com"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-500 text-sm"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">
+                      Makes your post‑it clickable
+                    </p>
+                  </div>
+
+                  {/* Protected toggle */}
+                  <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                     <input
                       id="protected"
                       type="checkbox"
@@ -594,21 +995,21 @@ function Draw() {
                     />
                     <label
                       htmlFor="protected"
-                      className="text-sm font-medium text-slate-700 cursor-pointer select-none"
+                      className="ml-2 text-sm font-medium text-slate-700 cursor-pointer select-none"
                     >
                       Protected{" "}
                       <span className="font-normal text-slate-400">(+$5)</span>
                     </label>
-                    <div className="relative">
+                    <div className="relative ml-2">
                       <button
                         type="button"
                         onMouseEnter={() => setShowProtectionInfo(true)}
                         onMouseLeave={() => setShowProtectionInfo(false)}
                         onClick={() => setShowProtectionInfo((v) => !v)}
-                        className="text-slate-400 hover:text-slate-600 transition-colors"
+                        className="flex items-center justify-center h-4 w-4 rounded-full bg-slate-300 hover:bg-slate-400 transition-colors"
                         aria-label="Protection info"
                       >
-                        <Info className="h-4 w-4" />
+                        <Info className="h-3.5 w-3.5 text-white" />
                       </button>
                       {showProtectionInfo && (
                         <div className="absolute left-1/2 -translate-x-1/2 bottom-6 w-56 bg-slate-800 text-white text-xs rounded-lg px-3 py-2 shadow-lg z-10 pointer-events-none">
@@ -619,26 +1020,46 @@ function Draw() {
                       )}
                     </div>
                   </div>
-                </div>
 
-                <button
-                  onClick={startPlacement}
-                  className="w-full px-4 py-3 bg-slate-900 text-white rounded-lg hover:bg-slate-800 active:bg-slate-700 transition-colors font-medium text-sm"
-                >
-                  Place on Board — ${totalPrice}
-                </button>
-                <p className="text-xs text-slate-400 text-center">
-                  Your post will be automatically removed from the board after
-                  30 days.
-                </p>
-              </div>
-              <p className="text-xs text-slate-400 text-center pt-1">
-                Drawing as:{" "}
-                {[user.given_name, user.family_name]
-                  .filter(Boolean)
-                  .join(" ") || "?"}
-              </p>
+                  {/* Price + posting-as */}
+                  <div className="flex items-center justify-between px-1">
+                    <p className="text-xs text-slate-400">
+                      Drawing as{" "}
+                      {[user.given_name, user.family_name]
+                        .filter(Boolean)
+                        .join(" ") || "?"}
+                    </p>
+                    <p className="text-sm font-bold text-slate-900">
+                      ${totalPrice}
+                    </p>
+                  </div>
+
+                  {/* Navigation */}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => goToStep(2)}
+                      className="flex items-center gap-1.5 px-4 py-3 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-colors font-medium text-sm"
+                    >
+                      <ArrowLeft className="w-4 h-4" /> Back
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDrawingData(generateDrawingData());
+                        setIsPlacing(true);
+                      }}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800 active:bg-slate-700 transition-colors font-medium text-sm"
+                    >
+                      Place on Board — ${totalPrice}
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-400 text-center">
+                    Your post will be automatically removed after 30 days.
+                  </p>
+                </div>
+              )}
             </div>
+            {/* end step-content */}
           </div>
         </div>
       )}

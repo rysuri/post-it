@@ -95,7 +95,7 @@ function Navbar() {
             className="px-4 py-3 hover:bg-black/5 transition-colors"
             onClick={closeMenu}
           >
-            Operations
+            Post
           </Link>
 
           <Link
