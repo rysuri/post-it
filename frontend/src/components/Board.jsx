@@ -141,7 +141,7 @@ function Board() {
         if (lastPinchDistance.current) {
           const scale = dist / lastPinchDistance.current;
           const currentZoom = zoomRef.current;
-          const newZoom = Math.min(Math.max(0.1, currentZoom * scale), 3);
+          const newZoom = Math.min(Math.max(0.2, currentZoom * scale), 3);
 
           const pointX = (midX - panRef.current.x) / currentZoom;
           const pointY = (midY - panRef.current.y) / currentZoom;
@@ -183,7 +183,7 @@ function Board() {
 
       const scale = 1 - e.deltaY * 0.001;
       const currentZoom = zoomRef.current;
-      const newZoom = Math.min(Math.max(0.1, currentZoom * scale), 3);
+      const newZoom = Math.min(Math.max(0.2, currentZoom * scale), 3);
 
       const pointX = (e.clientX - panRef.current.x) / currentZoom;
       const pointY = (e.clientY - panRef.current.y) / currentZoom;
@@ -231,7 +231,7 @@ function Board() {
     const cx = window.innerWidth / 2;
     const cy = window.innerHeight / 2;
     const currentZoom = zoomRef.current;
-    const newZoom = Math.max(currentZoom - 0.2, 0.1);
+    const newZoom = Math.max(currentZoom - 0.2, 0.3);
 
     zoomRef.current = newZoom;
     panRef.current = {
