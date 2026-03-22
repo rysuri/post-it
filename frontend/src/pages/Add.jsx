@@ -867,7 +867,7 @@ function Add() {
                       className="ml-2 text-sm font-medium text-slate-700 cursor-pointer select-none"
                     >
                       Protected{" "}
-                      <span className="font-normal text-slate-400">(+$5)</span>
+                      <span className="font-normal text-slate-400">(+$10)</span>
                     </label>
 
                     {/* Info tooltip */}
