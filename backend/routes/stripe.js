@@ -118,7 +118,7 @@ router.post("/create-checkout-session", async (req, res) => {
        RETURNING id`,
       [
         userId,
-        message?.trim() || null,
+        message?.trimEnd() || null,
         drawing ?? null,
         link ?? null,
         size,
