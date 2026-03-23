@@ -1,25 +1,127 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 import PostIt from "./PostIt";
 import { useBoard } from "../BoardContext";
 import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// InfoCard
+// ─────────────────────────────────────────────────────────────────────────────
+
+const InfoCard = memo(function InfoCard({ postCount }) {
+  return (
+    <div className="bg-white rounded-lg shadow-lg p-3">
+      <img
+        src="/logo-simple-bw.png"
+        alt="Make A Post"
+        className="h-4 w-auto object-contain mb-1"
+      />
+      <p className="text-sm text-gray-600">Scroll to zoom · Drag to pan</p>
+      <p className="text-sm text-gray-600">Posts: {postCount}</p>
+    </div>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ZoomCard
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ZoomCard = memo(function ZoomCard({
+  onZoomIn,
+  onZoomOut,
+  onReset,
+  zoom,
+}) {
+  return (
+    <div className="bg-white rounded-lg shadow-lg p-3 flex flex-col gap-2">
+      <button
+        onClick={onZoomIn}
+        className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
+      >
+        Zoom In
+        <ZoomIn className="h-4 w-4" />
+      </button>
+
+      <button
+        onClick={onZoomOut}
+        className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
+      >
+        Zoom Out
+        <ZoomOut className="h-4 w-4" />
+      </button>
+
+      <button
+        onClick={onReset}
+        className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition text-sm font-medium"
+      >
+        Reset View
+        <RotateCcw className="h-4 w-4" />
+      </button>
+
+      <div className="text-center text-sm text-gray-500">
+        {(zoom * 100).toFixed(0)}%
+      </div>
+    </div>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PostItem — memoized so posts never re-render during pan/zoom or modal toggles
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PostItem = memo(function PostItem({
+  post,
+  boardWidth,
+  boardHeight,
+  onModalOpen,
+  onModalClose,
+}) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: `${(post.position_x || 0) + boardWidth / 2}px`,
+        top: `${(post.position_y || 0) + boardHeight / 2}px`,
+        transform: "translate(-50%, -50%)",
+      }}
+    >
+      <PostIt
+        message={post.message}
+        drawing={post.drawing}
+        link={post.link}
+        size={post.size}
+        color={post.color}
+        createdAt={post.iat}
+        expiresAt={post.exp}
+        isProtected={post.protected}
+        onModalOpen={onModalOpen}
+        onModalClose={onModalClose}
+      />
+    </div>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Board
+// ─────────────────────────────────────────────────────────────────────────────
+
 function Board() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // Isolated state for the zoom % display — updating this must not re-render
+  // the board canvas or the post list.
+  const [displayZoom, setDisplayZoom] = useState(1);
 
   const location = useLocation();
   const boardRef = useRef(null);
   const boardInnerRef = useRef(null);
 
-  // ── Refs for gesture state (no re-renders during drag/pinch) ──
+  // Gesture state in refs — pointer/wheel handlers never need to re-create.
   const pointers = useRef(new Map());
   const lastPinchDistance = useRef(null);
-  // Track displayed zoom for the zoom % indicator without re-rendering the whole board
-  const [displayZoom, setDisplayZoom] = useState(1);
 
   const {
     zoom,
@@ -35,25 +137,44 @@ function Board() {
     isBoardInteractive,
   } = useBoard();
 
-  // Sync context values into refs on mount only
+  // ── One-time synchronous ref initialization ───────────────────────────────
+  //
+  // This block runs during render (not in an effect), so panRef/zoomRef are
+  // set BEFORE the JSX below is evaluated. That means the initial `transform`
+  // style on boardInnerRef is already correct on the very first paint:
+  //   • No top-left flash on reload.
+  //   • No snap-to-origin on first click (commitTransform writes the same
+  //     values that are already in the refs).
+  //
+  // • If the context already carries a non-origin pan (user navigated away
+  //   and came back), restore it.
+  // • Otherwise center the board in the viewport.
+  //
+  const initializedRef = useRef(false);
+  if (!initializedRef.current) {
+    initializedRef.current = true;
+    const contextHasPan = pan.x !== 0 || pan.y !== 0;
+    panRef.current = contextHasPan
+      ? { ...pan }
+      : {
+          x: window.innerWidth / 2 - BOARD_WIDTH / 2,
+          y: window.innerHeight / 2 - BOARD_HEIGHT / 2,
+        };
+    zoomRef.current = zoom || 1;
+    setDisplayZoom(zoomRef.current);
+  }
+
+  // ── Stable setter refs ────────────────────────────────────────────────────
+  const setPanRef = useRef(setPan);
+  const setZoomRef = useRef(setZoom);
   useEffect(() => {
-    panRef.current = { ...pan };
-    zoomRef.current = zoom;
-    setDisplayZoom(zoom);
-    applyTransform();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const blockedRoutes = ["/dashboard", "/operations", "/login", "/report"];
-  const isBlocked =
-    blockedRoutes.includes(location.pathname) ||
-    !isBoardInteractive ||
-    isModalOpen;
-
-  const isBlockedRef = useRef(false);
+    setPanRef.current = setPan;
+  }, [setPan]);
   useEffect(() => {
-    isBlockedRef.current = isBlocked;
-  }, [isBlocked]);
+    setZoomRef.current = setZoom;
+  }, [setZoom]);
 
+  // ── Data fetching ─────────────────────────────────────────────────────────
   useEffect(() => {
     fetchPosts();
   }, [refreshTrigger]);
@@ -72,35 +193,51 @@ function Board() {
     }
   }
 
-  // ── Stable function refs — wheel effect uses [] deps, never re-attaches ──
-  const setPanRef = useRef(setPan);
-  const setZoomRef = useRef(setZoom);
-  useEffect(() => {
-    setPanRef.current = setPan;
-  }, [setPan]);
-  useEffect(() => {
-    setZoomRef.current = setZoom;
-  }, [setZoom]);
+  // ── Blocked state ─────────────────────────────────────────────────────────
+  const blockedRoutes = ["/dashboard", "/operations", "/login", "/report"];
+  const isBlocked =
+    blockedRoutes.includes(location.pathname) ||
+    !isBoardInteractive ||
+    isModalOpen;
 
-  // Apply transform directly to DOM — zero React re-renders
-  // Also synchronously notifies any registered placement listener
+  const isBlockedRef = useRef(false);
+  useEffect(() => {
+    isBlockedRef.current = isBlocked;
+  }, [isBlocked]);
+
+  // ── Transform helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Writes panRef/zoomRef directly to the DOM — zero React renders.
+   * Also synchronously notifies the placement listener so the post-placement
+   * preview stays in sync with zero lag.
+   */
   const applyTransform = useCallback(() => {
     if (!boardInnerRef.current) return;
     const { x, y } = panRef.current;
     const z = zoomRef.current;
     boardInnerRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${z})`;
-    // Same call stack as board DOM update — zero lag guaranteed
     transformListenerRef.current?.({ zoom: z, pan: { x, y } });
-  }, []); // stable — only uses refs
+  }, []); // stable — only touches refs
 
-  // Commit ref values to context state
+  /**
+   * Commits ref values into React context so other consumers (placement modal,
+   * etc.) can read the final resting transform. Also updates the zoom %
+   * indicator. Does NOT touch boardInnerRef, so the board canvas never
+   * re-renders from this call.
+   */
   const commitTransform = useCallback(() => {
     setPanRef.current({ ...panRef.current });
     setZoomRef.current(zoomRef.current);
     setDisplayZoom(zoomRef.current);
-  }, []); // stable — only uses refs
+  }, []); // stable — only touches refs
 
-  // ── Pointer events ──
+  // Safety net: re-apply transform once the board DOM exists after loading.
+  useEffect(() => {
+    if (!loading) applyTransform();
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Pointer handlers ──────────────────────────────────────────────────────
 
   const handlePointerDown = useCallback(
     (e) => {
@@ -119,20 +256,17 @@ function Board() {
       const prev = pointers.current.get(e.pointerId);
       const dx = e.clientX - prev.x;
       const dy = e.clientY - prev.y;
-
       pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-      // PAN (single pointer)
       if (pointers.current.size === 1) {
+        // ── Pan ──
         panRef.current = {
           x: panRef.current.x + dx,
           y: panRef.current.y + dy,
         };
         applyTransform();
-      }
-
-      // PINCH ZOOM (two pointers)
-      if (pointers.current.size === 2) {
+      } else if (pointers.current.size === 2) {
+        // ── Pinch zoom ──
         const pts = [...pointers.current.values()];
         const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         const midX = (pts[0].x + pts[1].x) / 2;
@@ -142,7 +276,6 @@ function Board() {
           const scale = dist / lastPinchDistance.current;
           const currentZoom = zoomRef.current;
           const newZoom = Math.min(Math.max(0.2, currentZoom * scale), 3);
-
           const pointX = (midX - panRef.current.x) / currentZoom;
           const pointY = (midY - panRef.current.y) / currentZoom;
 
@@ -172,7 +305,7 @@ function Board() {
     [commitTransform],
   );
 
-  // ── Wheel zoom — attached as native listener so we can use passive:false ──
+  // ── Wheel zoom — native listener so we can call preventDefault ────────────
   useEffect(() => {
     const el = boardRef.current;
     if (!el) return;
@@ -184,7 +317,6 @@ function Board() {
       const scale = 1 - e.deltaY * 0.001;
       const currentZoom = zoomRef.current;
       const newZoom = Math.min(Math.max(0.2, currentZoom * scale), 3);
-
       const pointX = (e.clientX - panRef.current.x) / currentZoom;
       const pointY = (e.clientY - panRef.current.y) / currentZoom;
 
@@ -196,10 +328,9 @@ function Board() {
 
       applyTransform();
 
+      // Debounce context commit — only needed once the user stops scrolling.
       clearTimeout(el._wheelTimer);
-      el._wheelTimer = setTimeout(() => {
-        commitTransform();
-      }, 150);
+      el._wheelTimer = setTimeout(() => commitTransform(), 150);
     };
 
     el.addEventListener("wheel", handleWheel, { passive: false });
@@ -207,11 +338,11 @@ function Board() {
       el.removeEventListener("wheel", handleWheel);
       clearTimeout(el._wheelTimer);
     };
-  }, [loading]); // re-runs when loading finishes and boardRef becomes available
+  }, [loading]); // re-attaches once the board DOM exists
 
-  // ── Button controls ──
+  // ── Button controls ───────────────────────────────────────────────────────
 
-  const handleZoomIn = () => {
+  const handleZoomIn = useCallback(() => {
     const cx = window.innerWidth / 2;
     const cy = window.innerHeight / 2;
     const currentZoom = zoomRef.current;
@@ -225,9 +356,9 @@ function Board() {
 
     applyTransform();
     commitTransform();
-  };
+  }, [applyTransform, commitTransform]);
 
-  const handleZoomOut = () => {
+  const handleZoomOut = useCallback(() => {
     const cx = window.innerWidth / 2;
     const cy = window.innerHeight / 2;
     const currentZoom = zoomRef.current;
@@ -241,9 +372,9 @@ function Board() {
 
     applyTransform();
     commitTransform();
-  };
+  }, [applyTransform, commitTransform]);
 
-  const handleResetView = () => {
+  const handleResetView = useCallback(() => {
     zoomRef.current = 1;
     panRef.current = {
       x: window.innerWidth / 2 - BOARD_WIDTH / 2,
@@ -252,26 +383,49 @@ function Board() {
 
     applyTransform();
     commitTransform();
-  };
+  }, [applyTransform, commitTransform, BOARD_WIDTH, BOARD_HEIGHT]);
 
-  // ── Loading / Error ──
+  // ── Modal handlers — stable so PostItem memo is never invalidated ─────────
+  const handleModalOpen = useCallback(() => setIsModalOpen(true), []);
+  const handleModalClose = useCallback(() => setIsModalOpen(false), []);
 
-  if (loading)
+  // ── Post elements — only recomputed when the posts array changes ──────────
+  const postElements = useMemo(
+    () =>
+      posts.map((post) => (
+        <PostItem
+          key={post.id}
+          post={post}
+          boardWidth={BOARD_WIDTH}
+          boardHeight={BOARD_HEIGHT}
+          onModalOpen={handleModalOpen}
+          onModalClose={handleModalClose}
+        />
+      )),
+    [posts, BOARD_WIDTH, BOARD_HEIGHT, handleModalOpen, handleModalClose],
+  );
+
+  // ── Loading / error ───────────────────────────────────────────────────────
+
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p>Loading posts...</p>
       </div>
     );
+  }
 
-  if (error)
+  if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p>{error}</p>
       </div>
     );
+  }
 
   const legendTransition = "transition-all duration-100 ease-in-out";
 
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="relative w-full h-screen overflow-hidden bg-gradient-to-br from-gray-50 to-gray-200">
       {/* ── Blur overlay when board is blocked ── */}
@@ -295,7 +449,7 @@ function Board() {
           opacity: isBlocked ? 0 : 1,
         }}
       >
-        <InfoCard posts={posts} />
+        <InfoCard postCount={posts.length} />
       </div>
 
       {/* Tablet */}
@@ -309,7 +463,7 @@ function Board() {
             transform: isBlocked ? "translateX(-150%)" : "translateX(0)",
           }}
         >
-          <InfoCard posts={posts} />
+          <InfoCard postCount={posts.length} />
         </div>
       </div>
 
@@ -334,22 +488,47 @@ function Board() {
         </div>
       </div>
 
-      {/* ── BOARD CANVAS ── */}
+      {/* ── BOARD CANVAS ──
+          overflow:hidden clips posts outside the viewport via CSS — no JS
+          culling, no flicker on mouse-up.
+          ── */}
       <div
         ref={boardRef}
         className="w-full h-full cursor-grab active:cursor-grabbing"
-        style={{ touchAction: "none" }}
+        style={{ touchAction: "none", overflow: "hidden" }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
+        {/*
+          Two deliberate choices on this div:
+
+          1. `transform` reads from panRef/zoomRef, not React state.
+             The values are initialized synchronously above the JSX, so the
+             first paint already has the correct centered position — no flash
+             and no snap-to-origin. applyTransform() owns all subsequent
+             updates via direct DOM mutation; commitTransform() syncs context
+             state for other consumers without causing this subtree to
+             re-render.
+
+          2. No `willChange: "transform"`.
+             will-change: transform tells the browser to rasterize the
+             entire subtree into a GPU texture at its current pixel size.
+             When the board is then zoomed in, that texture gets magnified
+             and CSS text becomes blurry. Drawings (canvas-based) have their
+             own rasterization path and are less affected, which is why
+             drawings looked sharp while text did not.
+             translate3d already promotes the element to a compositor layer
+             for smooth panning and zooming — will-change is redundant and
+             harmful here.
+        */}
         <div
           ref={boardInnerRef}
           style={{
             width: `${BOARD_WIDTH}px`,
             height: `${BOARD_HEIGHT}px`,
-            transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+            transform: `translate3d(${panRef.current.x}px, ${panRef.current.y}px, 0) scale(${zoomRef.current})`,
             transformOrigin: "0 0",
             position: "relative",
             backgroundColor: "#f4f5f7",
@@ -362,43 +541,7 @@ function Board() {
             backgroundSize: "100px 100px, 100px 100px, 20px 20px, 20px 20px",
           }}
         >
-          {posts
-            .filter((post) => {
-              const padding = 300;
-              const vLeft = (-pan.x - padding) / zoom;
-              const vTop = (-pan.y - padding) / zoom;
-              const vRight = (window.innerWidth - pan.x + padding) / zoom;
-              const vBottom = (window.innerHeight - pan.y + padding) / zoom;
-
-              const px = (post.position_x || 0) + BOARD_WIDTH / 2;
-              const py = (post.position_y || 0) + BOARD_HEIGHT / 2;
-
-              return px >= vLeft && px <= vRight && py >= vTop && py <= vBottom;
-            })
-            .map((post) => (
-              <div
-                key={post.id}
-                style={{
-                  position: "absolute",
-                  left: `${(post.position_x || 0) + BOARD_WIDTH / 2}px`,
-                  top: `${(post.position_y || 0) + BOARD_HEIGHT / 2}px`,
-                  transform: "translate(-50%, -50%)",
-                }}
-              >
-                <PostIt
-                  message={post.message}
-                  drawing={post.drawing}
-                  link={post.link}
-                  size={post.size}
-                  color={post.color}
-                  createdAt={post.iat}
-                  expiresAt={post.exp}
-                  isProtected={post.protected}
-                  onModalOpen={() => setIsModalOpen(true)}
-                  onModalClose={() => setIsModalOpen(false)}
-                />
-              </div>
-            ))}
+          {postElements}
         </div>
       </div>
 
@@ -482,54 +625,6 @@ function Board() {
             {(displayZoom * 100).toFixed(0)}%
           </span>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function InfoCard({ posts }) {
-  return (
-    <div className="bg-white rounded-lg shadow-lg p-3">
-      <img
-        src="/logo-simple-bw.png"
-        alt="Make A Post"
-        className="h-4 w-auto object-contain mb-1"
-      />
-      <p className="text-sm text-gray-600">Scroll to zoom · Drag to pan</p>
-      <p className="text-sm text-gray-600">Posts: {posts.length}</p>
-    </div>
-  );
-}
-
-function ZoomCard({ onZoomIn, onZoomOut, onReset, zoom }) {
-  return (
-    <div className="bg-white rounded-lg shadow-lg p-3 flex flex-col gap-2">
-      <button
-        onClick={onZoomIn}
-        className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
-      >
-        Zoom In
-        <ZoomIn className="h-4 w-4" />
-      </button>
-
-      <button
-        onClick={onZoomOut}
-        className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition text-sm font-medium"
-      >
-        Zoom Out
-        <ZoomOut className="h-4 w-4" />
-      </button>
-
-      <button
-        onClick={onReset}
-        className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition text-sm font-medium"
-      >
-        Reset View
-        <RotateCcw className="h-4 w-4" />
-      </button>
-
-      <div className="text-center text-sm text-gray-500">
-        {(zoom * 100).toFixed(0)}%
       </div>
     </div>
   );
